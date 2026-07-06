@@ -1,0 +1,36 @@
+# Render blueprint — read-only online deploy of the Labor Hours dashboard.
+#
+# Deploys a free managed Postgres + the FastAPI web service, seeded with the real
+# 606-ticket snapshot (db/90_sample_snapshot.sql). The worker is intentionally OMITTED
+# — this is read-only, no Notion/Slack ingest.
+#
+# Deploy (from your own Render account):
+#   1. Push this repo to GitHub.
+#   2. Render Dashboard -> New -> Blueprint -> pick the repo.
+#   3. Set DASHBOARD_PASSWORD (and optionally DASHBOARD_USER) when prompted.
+#   4. Apply. The dashboard is private: HTTP Basic with your credentials.
+#
+# To later enable live ingest, add a `worker` service running `python -m app.worker`
+# with NOTION_TOKEN / SLACK_* set.
+
+databases:
+  - name: labor-hours-db
+    plan: free
+
+services:
+  - type: web
+    name: labor-hours-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: python scripts/apply_all_sql.py
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: labor-hours-db
+          property: connectionString
+      - key: DASHBOARD_USER
+        value: covena
+      - key: DASHBOARD_PASSWORD
+        sync: false          # set in the Render UI — never commit it

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FDE/SL Labor Analytics — live</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0f1117;--card:#181b24;--txt:#e6e9f0;--mut:#8b93a7;--fix:#4cc38a;--prd:#f0b429;--unt:#565e72}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px}
+h1{font-size:22px;margin-bottom:4px}h2{font-size:16px;margin:0 0 12px}
+.sub{color:var(--mut);margin-bottom:16px}
+.banner{background:#2a1e10;border:1px solid #6e4a12;border-radius:10px;padding:12px 16px;margin-bottom:20px;color:#f5c97b;font-size:13px}
+.live{display:flex;align-items:center;gap:8px;background:#11341f;border:1px solid #1f6e3f;border-radius:10px;padding:12px 16px;margin-bottom:20px;color:#8de0a8;font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:#4cc38a;box-shadow:0 0 8px #4cc38a;animation:p 1.6s infinite}
+@keyframes p{50%{opacity:.3}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.kpi{background:var(--card);border-radius:10px;padding:14px}
+.kpi .v{font-size:24px;font-weight:700}.kpi .l{color:var(--mut);font-size:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.card{background:var(--card);border-radius:12px;padding:16px}
+.card.full{grid-column:1/-1}
+.note{color:var(--mut);font-size:12px;margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--mut);text-align:left;padding:6px 8px;border-bottom:1px solid #2a2f3e;font-weight:600}
+td{padding:6px 8px;border-bottom:1px solid #23283573;vertical-align:top}
+.chip{display:inline-block;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600}
+.c-ok{background:#11341f;color:#4cc38a}.c-px{background:#3a2b10;color:#f0b429}.c-pt{background:#1c2a4a;color:#7ba3f5}.c-bl{background:#3a1512;color:#e5534b}
+canvas{max-height:340px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>FDE/SL Labor Analytics — live</h1>
+<div class="sub">Reads the Postgres view layer via <code>/metrics/*</code> (60s refresh). Hours &amp; volume only — no dollars, no per-person rankings.</div>
+
+<div class="live"><span class="dot"></span><span id="working">Connecting to “who’s working now”…</span></div>
+
+<div class="banner"><b>⚠ Time figures without interval coverage are PROXIES.</b> Until the <code>/on</code> toggle produces intervals, "work time" columns are calendar spans (In&nbsp;Progress→Done). <code>active_hours</code> is the real number and fills in as intervals accrue.</div>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="grid">
+<div class="card full"><h2>Weekly ticket volume by task type</h2><canvas id="cWeek"></canvas>
+<div class="note">The before/after timeline feature ship-dates annotate (once the Features table has rows).</div></div>
+
+<div class="card"><h2>Task-type mix per client (ticket volume)</h2><canvas id="cMix"></canvas></div>
+<div class="card"><h2>Active hours per client <span class="chip c-px">proxy until intervals accrue</span></h2><canvas id="cHours"></canvas></div>
+<div class="card"><h2>Per-FDE/SL task-type mix (%) — allocation, not ranking</h2><canvas id="cFde"></canvas></div>
+<div class="card"><h2>Open backlog by client × status</h2><canvas id="cBack"></canvas></div>
+
+<div class="card full"><h2>QA-failed / recurrence signals</h2>
+<table><thead><tr><th>Client</th><th>Signal</th><th>Priority</th></tr></thead><tbody id="tRec"></tbody></table></div>
+
+<div class="card full"><h2>Metric catalog — 22 analytics and what each needs</h2>
+<table><thead><tr><th>Scope</th><th>Metric</th><th>Status</th><th>Needs</th></tr></thead><tbody id="tCat"></tbody></table></div>
+</div>
+
+<script>
+const C={fix:"#4cc38a",prd:"#f0b429",unt:"#565e72"};
+Chart.defaults.color="#8b93a7";Chart.defaults.borderColor="#262b3a";
+const api=s=>fetch("/metrics/"+s).then(r=>r.json());
+const TYPES=["AI Fix","PRD Change","Untyped"];
+const colorFor=t=>t==="AI Fix"?C.fix:t==="PRD Change"?C.prd:C.unt;
+const charts={};
+function draw(id,cfg){if(charts[id])charts[id].destroy();charts[id]=new Chart(document.getElementById(id),cfg);}
+
+// pivot rows [{key,type,val}] into stacked datasets over TYPES
+function stack(rows,keyF,typeF,valF,horizontal){
+  const keys=[...new Set(rows.map(keyF))];
+  const types=[...new Set(rows.map(typeF))];
+  const datasets=types.map(ty=>({label:ty,backgroundColor:colorFor(ty),
+    data:keys.map(k=>rows.filter(r=>keyF(r)===k&&typeF(r)===ty).reduce((s,r)=>s+(+valF(r)||0),0))}));
+  return {labels:keys,datasets,horizontal};
+}
+
+async function load(){
+  const [dq,week,client,fde,back,qaf,rec,cat]=await Promise.all([
+    api("data-quality"),api("by-week-type"),api("by-client-type"),api("by-fde-type"),
+    api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog")]);
+
+  // KPIs from data_quality
+  const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
+  const kpi=[["total_tickets","Tickets"],["status_done","Done"],["open_backlog","Open backlog"],
+    ["status_qa_failed","QA Failed"],["tickets_with_intervals","Tickets w/ intervals"],["open_intervals_now","Working now"]];
+  document.getElementById("kpis").innerHTML=kpi.map(([k,l])=>
+    `<div class="kpi"><div class="v">${kv[k]??"–"}</div><div class="l">${l}</div></div>`).join("");
+
+  // weekly volume (stacked bar)
+  const w=stack(week,r=>r.iso_week,r=>r.change_type,r=>r.tickets);
+  draw("cWeek",{type:"bar",data:{labels:w.labels,datasets:w.datasets},
+    options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
+
+  // client mix (horizontal stacked)
+  const m=stack(client.filter(r=>r.client),r=>r.client,r=>r.change_type,r=>r.tickets);
+  draw("cMix",{type:"bar",data:{labels:m.labels,datasets:m.datasets},
+    options:{indexAxis:"y",scales:{x:{stacked:true},y:{stacked:true}}}});
+
+  // active hours per client (bar) — real intervals; 0 until toggle used
+  const byClient={};client.forEach(r=>{if(r.client)byClient[r.client]=(byClient[r.client]||0)+(+r.active_hours||0);});
+  const hc=Object.entries(byClient).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  draw("cHours",{type:"bar",data:{labels:hc.map(x=>x[0]),datasets:[{label:"Active hours (intervals)",
+    data:hc.map(x=>Math.round(x[1]*10)/10),backgroundColor:"#5b8def99"}]},
+    options:{scales:{y:{title:{display:true,text:"active hours"}}}}});
+
+  // FDE mix % (horizontal stacked, normalized per person)
+  const people=[...new Set(fde.map(r=>r.fde))];
+  const ptypes=[...new Set(fde.map(r=>r.change_type))];
+  const totals=Object.fromEntries(people.map(p=>[p,fde.filter(r=>r.fde===p).reduce((s,r)=>s+r.tickets,0)]));
+  draw("cFde",{type:"bar",data:{labels:people,datasets:ptypes.map(ty=>({label:ty,backgroundColor:colorFor(ty),
+    data:people.map(p=>{const t=totals[p]||1;const v=fde.filter(r=>r.fde===p&&r.change_type===ty).reduce((s,r)=>s+r.tickets,0);return Math.round(1000*v/t)/10;})}))},
+    options:{indexAxis:"y",scales:{x:{stacked:true,max:100},y:{stacked:true}}}});
+
+  // backlog by status
+  const bst=stack(back.filter(r=>r.client),r=>r.client,r=>r.status,r=>r.tickets);
+  const statusColor={"Not Started":"#565e72","In Progress":"#f0b429","REVIEW":"#a371f7","QA Failed":"#e5534b","Blocked":"#8b2f2a"};
+  bst.datasets.forEach(d=>d.backgroundColor=statusColor[d.label]||"#5b8def");
+  draw("cBack",{type:"bar",data:{labels:bst.labels,datasets:bst.datasets},
+    options:{indexAxis:"y",scales:{x:{stacked:true},y:{stacked:true}}}});
+
+  // signals table (QA failed + recurrence)
+  const sig=[...qaf.map(r=>[r.client,r.feedback,r.priority||""]),
+             ...rec.map(r=>[r.client,r.detail,r.kind||""])];
+  document.getElementById("tRec").innerHTML=sig.map(r=>`<tr><td><b>${r[0]??""}</b></td><td>${r[1]??""}</td><td>${r[2]}</td></tr>`).join("")||`<tr><td colspan=3 class=note>none</td></tr>`;
+
+  // metric catalog
+  const chip=s=>s.startsWith("COMPUTED")?"c-ok":s.startsWith("PROXY")?"c-px":(s.startsWith("PARTIAL")||s.startsWith("READY"))?"c-pt":"c-bl";
+  document.getElementById("tCat").innerHTML=cat.map(r=>
+    `<tr><td>${r.scope}</td><td>${r.metric}</td><td><span class="chip ${chip(r.status)}">${r.status}</span></td><td>${r.needs}</td></tr>`).join("");
+}
+load();setInterval(load,60000);
+
+// live "who's working now" via SSE
+const es=new EventSource("/stream/working");
+es.onmessage=e=>{const rows=JSON.parse(e.data);const el=document.getElementById("working");
+  el.textContent=rows.length?`Working now: ${rows.map(r=>`${r.person} on ${r.client||"?"} (${Math.round(r.minutes_open)}m)`).join(" · ")}`:"Nobody has an open interval right now.";};
+es.onerror=()=>{document.getElementById("working").textContent="Live stream disconnected — retrying…";};
+</script>
+</body>
+</html>
