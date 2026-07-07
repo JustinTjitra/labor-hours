@@ -1,17 +1,18 @@
 -- Seed data: anonymization map, expanded taxonomy, and the 22-metric catalog.
 -- Idempotent (safe to re-run).
 
--- FDE anonymization map (from the 2026-07-03 pull). These guest IDs resolve to
--- nothing via Notion get-users; real names require the Employee Database.
+-- PIC identity map (real names from the ticket DB), keyed by the stable Notion
+-- user id. FDE-E / FDE-F names not yet confirmed. Guest IDs don't resolve via the
+-- Notion API, so names are set here manually.
 INSERT INTO fde_map (label, notion_user_id) VALUES
-  ('FDE-A',     '0a9ee3e0-b8e5-49c5-bd0c-b0b91397fc4f'),
-  ('FDE-B',     '830c99df-acb0-4dca-917a-530cdaa8367e'),
-  ('FDE-C',     '96cbc429-3a75-494e-af79-fe01c707c493'),
-  ('FDE-D',     'a639357d-95ad-4ba2-a820-d826cc5516dd'),
-  ('FDE-E',     'e97253fd-d267-4384-a705-f723bc214f30'),
-  ('FDE-F',     '4d4b61c0-705b-49b9-be19-438fc4ce5557'),
-  ('SL-Harvey', '1088aecb-decc-4952-973b-8196537f169a')
-ON CONFLICT (label) DO UPDATE SET notion_user_id = EXCLUDED.notion_user_id;
+  ('Evan',             '0a9ee3e0-b8e5-49c5-bd0c-b0b91397fc4f'),
+  ('Michael Immanuel', '830c99df-acb0-4dca-917a-530cdaa8367e'),
+  ('Keanan Wongso',    '96cbc429-3a75-494e-af79-fe01c707c493'),
+  ('Leroy Marshal',    'a639357d-95ad-4ba2-a820-d826cc5516dd'),
+  ('FDE-E',            'e97253fd-d267-4384-a705-f723bc214f30'),
+  ('FDE-F',            '4d4b61c0-705b-49b9-be19-438fc4ce5557'),
+  ('SL-Harvey',        '1088aecb-decc-4952-973b-8196537f169a')
+ON CONFLICT (notion_user_id) DO UPDATE SET label = EXCLUDED.label;
 
 -- Expanded Change Type taxonomy (build-order step 1). AI Fix / PRD Change already
 -- exist in Notion; the rest are the additions that replace 41% "Untyped".
