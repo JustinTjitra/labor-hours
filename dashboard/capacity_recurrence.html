@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Capacity & Recurrence — Labor Hours</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0f1117;--card:#181b24;--txt:#e6e9f0;--mut:#8b93a7;--ok:#4cc38a;--warn:#f0b429;--bad:#e5534b;--blue:#7ba3f5;--purp:#a371f7}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px}
+h1{font-size:22px;margin-bottom:4px}h2{font-size:15px;margin:0 0 12px}
+.sub{color:var(--mut);margin-bottom:16px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.kpi{background:var(--card);border-radius:10px;padding:14px}
+.kpi .v{font-size:26px;font-weight:700}.kpi .l{color:var(--mut);font-size:12px}
+.kpi.alert .v{color:var(--bad)}
+.card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:16px}
+.donutgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.donutcell{background:#0f1117;border:1px solid #23283570;border-radius:10px;padding:12px}
+.dn-title{font-size:14px;font-weight:600}.dn-sub{color:var(--mut);font-size:11px;margin-bottom:6px}
+.donutcell canvas{max-height:230px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--mut);text-align:left;padding:6px 8px;border-bottom:1px solid #2a2f3e;font-weight:600}
+td{padding:6px 8px;border-bottom:1px solid #23283573;vertical-align:top}
+.chip{display:inline-block;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600}
+.c-bad{background:#3a1512;color:var(--bad)}.c-warn{background:#3a2b10;color:var(--warn)}.c-ok{background:#11341f;color:var(--ok)}
+.tag{display:inline-block;background:#1c2333;color:var(--blue);border-radius:6px;padding:1px 7px;font-size:12px}
+.note{color:var(--mut);font-size:12px;margin-top:8px}
+@media(max-width:900px){}
+</style></head><body>
+<h1>Capacity &amp; Recurrence</h1>
+<div class="sub">Client allocation and rework signal, live from the ticket database (<span id="cnt">…</span> tickets · 60s refresh). Counts only. <a href="/dashboard/index.html" style="color:#7ba3f5">← main dashboard</a></div>
+<div class="kpis" id="kpis"></div>
+
+<div class="card"><h2>Cost-to-serve index — effort-weighted, not raw ticket count</h2>
+  <div style="position:relative;height:560px"><canvas id="cCost"></canvas></div>
+  <div class="note">Each ticket is one unit of work, plus up to 50% for rework (recurring or QA-failed). Priority is excluded on purpose — it's urgency, not effort. Real per-task-type effort weights slot in after the FDE interview. Hover for intensity per ticket.</div></div>
+
+<div class="card"><h2>Where each FDE's week goes — client allocation</h2>
+  <div class="donutgrid" id="donuts"></div>
+  <div class="note">Each donut is one person's ticket mix. Dominated by one color = concentrated on a single client (HHI shown per person).</div></div>
+
+<div class="card"><h2>Key-person risk — top FDE's share of each client's tickets</h2>
+  <div style="position:relative;height:640px"><canvas id="cRisk"></canvas></div>
+  <div class="note">Red = one person carries 100% of the client. If they're out, the client has no one with context.</div></div>
+
+<div class="card"><h2>Recurrence — share of a client's tickets in a recurring problem area</h2>
+  <div style="position:relative;height:560px"><canvas id="cRec"></canvas></div>
+  <div class="note">Concept-based: same underlying issue re-ticketed even when worded differently. Hover for QA-failed count. This is problem-area recurrence, not one identical bug re-filed.</div></div>
+
+<div class="card"><h2>Recurring problem groups — where unfixed work piles up</h2>
+  <table><thead><tr><th>Count</th><th>Client</th><th>Problem area</th><th>Examples</th></tr></thead><tbody id="groups"></tbody></table></div>
+
+<script>
+const C={ok:"#4cc38a",warn:"#f0b429",bad:"#e5534b",blue:"#7ba3f5",purp:"#a371f7",mut:"#565e72"};
+const palette=[C.blue,C.ok,C.warn,C.purp,"#e07b53","#53c9c9","#c953a0","#8a8a8a","#5d78c9"];
+Chart.defaults.color="#8b93a7";Chart.defaults.borderColor="#23283573";
+
+// Live: pulls the same DATA shape Kennard's baked HTML used, now computed server-side
+// from the Postgres ticket store at /metrics/capacity-recurrence (60s refresh tier).
+let _charts=[];
+const mk=(el,cfg)=>{const c=new Chart(el,cfg);_charts.push(c);return c;};
+
+function render(DATA){
+  _charts.forEach(c=>c.destroy());_charts=[];
+
+  const t=DATA.totals;
+  const cnt=document.getElementById("cnt");if(cnt)cnt.textContent=t.tickets;
+  document.getElementById("kpis").innerHTML=[
+    ["Tickets",t.tickets,""],["Clients",t.clients,""],["FDEs",t.fdes,""],
+    ["Single-person clients",t.single_person_clients,"alert"]
+  ].map(([l,v,c])=>`<div class="kpi ${c}"><div class="v">${v}</div><div class="l">${l}</div></div>`).join("");
+
+  const cts=DATA.cost_to_serve.filter(c=>c.tickets>=5);
+  mk(cCost,{type:"bar",data:{labels:cts.map(c=>c.client),
+    datasets:[{data:cts.map(c=>c.effort),
+      backgroundColor:cts.map(c=>c.eff_per_ticket>=1.5?C.bad:c.eff_per_ticket>=1.25?C.warn:C.blue),borderRadius:4}]},
+    options:{indexAxis:"y",maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw} effort pts · ${cts[c.dataIndex].tickets} tickets · ${cts[c.dataIndex].eff_per_ticket}/ticket · ${Math.round(cts[c.dataIndex].crit_high_share*100)}% crit+high`}}},
+      scales:{x:{title:{display:true,text:"effort points (cost to serve)"}}}}});
+
+  const dg=document.getElementById("donuts");dg.innerHTML="";
+  DATA.by_fde.forEach((f,idx)=>{
+    const cell=document.createElement("div");cell.className="donutcell";
+    cell.innerHTML=`<div class="dn-title">${f.fde}</div><div class="dn-sub">${f.tickets} tickets · ${f.clients} clients · HHI ${f.hhi}</div><canvas id="dn${idx}"></canvas>`;
+    dg.appendChild(cell);
+    const cl=Object.keys(f.breakdown),vals=Object.values(f.breakdown);
+    mk(cell.querySelector("canvas"),{type:"doughnut",
+      data:{labels:cl,datasets:[{data:vals,backgroundColor:cl.map((_,i)=>palette[i%palette.length]),borderWidth:2,borderColor:"#0f1117"}]},
+      options:{cutout:"55%",plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10},padding:6}},
+        tooltip:{callbacks:{label:c=>`${c.label}: ${c.raw} (${Math.round(100*c.raw/f.tickets)}%)`}}}}});
+  });
+
+  const risk=DATA.by_client.filter(c=>c.tickets>=5);
+  mk(cRisk,{type:"bar",data:{labels:risk.map(c=>c.client),
+    datasets:[{data:risk.map(c=>Math.round(c.top_share*100)),
+      backgroundColor:risk.map(c=>c.single_person?C.bad:c.top_share>=0.8?C.warn:C.blue),borderRadius:4}]},
+    options:{indexAxis:"y",maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw}% carried by ${risk[c.dataIndex].top_fde} (${risk[c.dataIndex].fdes} FDE${risk[c.dataIndex].fdes>1?'s':''})`}}},
+      scales:{x:{max:100,title:{display:true,text:"% by top FDE"}}}}});
+
+  const rec=DATA.recurrence.filter(r=>r.tickets>=5);
+  mk(cRec,{type:"bar",data:{labels:rec.map(r=>r.client),
+    datasets:[{data:rec.map(r=>Math.round(r.rate*100)),
+      backgroundColor:rec.map(r=>r.rate>=0.4?C.bad:r.rate>=0.2?C.warn:C.blue),borderRadius:4}]},
+    options:{indexAxis:"y",maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw}% in recurring areas · ${rec[c.dataIndex].in_recur}/${rec[c.dataIndex].tickets} tickets · ${rec[c.dataIndex].qa_failed} QA-failed`}}},
+      scales:{x:{title:{display:true,text:"% of tickets in a recurring problem area"}}}}});
+
+  document.getElementById("groups").innerHTML=DATA.groups.map(g=>
+    `<tr><td><span class="chip ${g.size>=8?'c-bad':g.size>=4?'c-warn':'c-ok'}">x${g.size}</span></td><td>${g.client}</td><td><span class="tag">${g.concept}</span></td><td style="color:#8b93a7">${g.examples.map(e=>e.replace(/</g,'&lt;')).join(" · ")}</td></tr>`).join("")
+    ||`<tr><td colspan=4 class=note>No recurring problem groups yet.</td></tr>`;
+}
+
+function load(){
+  fetch("/metrics/capacity-recurrence")
+    .then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
+    .then(render)
+    .catch(e=>{document.getElementById("kpis").innerHTML=
+      `<div class="kpi alert"><div class="v">—</div><div class="l">load failed: ${e.message}</div></div>`;});
+}
+load();setInterval(load,60000);
+</script></body></html>

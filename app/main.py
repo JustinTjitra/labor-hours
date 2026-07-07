@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db
+from .capacity import router as capacity_router
 from .config import settings
 from .metrics import router as metrics_router
 from .routes_ingest import router as ingest_router
@@ -63,6 +64,9 @@ async def basic_auth(request: Request, call_next):
     return await call_next(request)
 
 
+# capacity_router first: its static /metrics/capacity-recurrence path must win over
+# the metrics_router /metrics/{slug} catch-all (FastAPI matches in registration order).
+app.include_router(capacity_router)
 app.include_router(metrics_router)
 app.include_router(ingest_router)
 
