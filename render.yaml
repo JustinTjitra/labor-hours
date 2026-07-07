@@ -1,36 +1,71 @@
-# Render blueprint — read-only online deploy of the Labor Hours dashboard.
+# Render blueprint — Labor Hours dashboard + button ingest.
 #
-# Deploys a free managed Postgres + the FastAPI web service, seeded with the real
-# 606-ticket snapshot (db/90_sample_snapshot.sql). The worker is intentionally OMITTED
-# — this is read-only, no Notion/Slack ingest.
+# Deploys a managed Postgres + the FastAPI web service. preDeploy applies schema +
+# views + seeds (the demo snap_* overlay is skipped — see scripts/apply_all_sql.py);
+# load real tickets with one pg_dump restore into the Render DB (see docs) or by
+# setting NOTION_TOKEN. The button webhook (POST /notion/button/<token>) works right
+# away; the 2-min live Notion sync needs the optional worker + NOTION_TOKEN (bottom).
 #
-# Deploy (from your own Render account):
-#   1. Push this repo to GitHub.
-#   2. Render Dashboard -> New -> Blueprint -> pick the repo.
-#   3. Set DASHBOARD_PASSWORD (and optionally DASHBOARD_USER) when prompted.
-#   4. Apply. The dashboard is private: HTTP Basic with your credentials.
+# DEPLOY (from your own Render account):
+#   1. This repo is already on GitHub (JustinTjitra/labor-hours).
+#   2. Render Dashboard -> New -> Blueprint -> pick the repo -> Apply.
+#   3. When prompted, set the "sync:false" secrets below:
+#        DASHBOARD_PASSWORD   - login for the private dashboard
+#        BUTTON_WEBHOOK_TOKEN - the token in your Notion button's webhook URL
+#        NOTION_TOKEN         - leave blank for now; add later to turn on sync
+#   4. Your dashboard: https://labor-hours-api.onrender.com  (HTTP Basic: covena / <password>)
+#      Button webhook:  https://labor-hours-api.onrender.com/notion/button/<BUTTON_WEBHOOK_TOKEN>
 #
-# To later enable live ingest, add a `worker` service running `python -m app.worker`
-# with NOTION_TOKEN / SLACK_* set.
+# NOTE on Render's free tier: the free web service sleeps after ~15 min idle and cold-
+# starts (~30s) on the next request — fine for review, but for reliable button presses
+# bump the web `plan` to `starter`. Free Postgres expires after 90 days.
 
 databases:
   - name: labor-hours-db
     plan: free
 
 services:
+  # --- Web: dashboard + metrics API + button/Slack webhooks + SSE --------------
   - type: web
     name: labor-hours-api
     runtime: python
-    plan: free
+    plan: free                       # -> starter to stay warm for live button use
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: python scripts/apply_all_sql.py
+    preDeployCommand: python scripts/apply_all_sql.py   # idempotent: schema+views+seed (no demo snapshot)
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: labor-hours-db
-          property: connectionString
+        fromDatabase: { name: labor-hours-db, property: connectionString }
       - key: DASHBOARD_USER
         value: covena
       - key: DASHBOARD_PASSWORD
-        sync: false          # set in the Render UI — never commit it
+        sync: false                  # set in Render UI — never committed
+      - key: BUTTON_WEBHOOK_TOKEN
+        sync: false
+      - key: NOTION_TOKEN
+        sync: false                  # blank = sync off; add to enable live ingest
+      - key: NOTION_WRITE_ENABLED
+        value: "false"               # hard-off; nothing is written back to Notion
+      - key: NOTION_TICKET_DB_ID
+        value: 39581b4e-061b-8047-befc-e4b9301ad6e0   # sandbox COPY
+
+  # --- Worker: 2-min Notion sync + auto-closers + outbox flush ------------------
+  # Render background workers are a PAID feature (not free tier). Uncomment once you
+  # are on a paid plan AND have set NOTION_TOKEN above — then the dashboard follows
+  # Notion edits automatically. The web service alone already handles button presses.
+  #
+  # - type: worker
+  #   name: labor-hours-worker
+  #   runtime: python
+  #   plan: starter
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: python -m app.worker
+  #   envVars:
+  #     - key: DATABASE_URL
+  #       fromDatabase: { name: labor-hours-db, property: connectionString }
+  #     - key: NOTION_TOKEN
+  #       sync: false
+  #     - key: NOTION_WRITE_ENABLED
+  #       value: "false"
+  #     - key: NOTION_TICKET_DB_ID
+  #       value: 39581b4e-061b-8047-befc-e4b9301ad6e0
