@@ -27,6 +27,14 @@ td{padding:6px 8px;border-bottom:1px solid #23283573;vertical-align:top}
 .chip{display:inline-block;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600}
 .c-ok{background:#11341f;color:#4cc38a}.c-px{background:#3a2b10;color:#f0b429}.c-pt{background:#1c2a4a;color:#7ba3f5}.c-bl{background:#3a1512;color:#e5534b}
 canvas{max-height:340px}
+.active-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.aw{background:#0f1117;border:1px solid #23283570;border-left:3px solid #4cc38a;border-radius:10px;padding:12px}
+.aw .who{font-weight:700;font-size:14px;display:flex;align-items:center;gap:7px}
+.aw .task{font-size:13px;margin:7px 0 6px;line-height:1.35}
+.aw .meta{color:var(--mut);font-size:12px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.aw .timer{font-variant-numeric:tabular-nums;color:#4cc38a;font-weight:700;font-size:15px}
+.aw .pulse{width:7px;height:7px;border-radius:50%;background:#4cc38a;box-shadow:0 0 6px #4cc38a;animation:p 1.6s infinite;flex:none}
+.aw-empty{color:var(--mut);font-size:13px;padding:6px 2px}
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -35,6 +43,10 @@ canvas{max-height:340px}
 <div class="sub">Reads the Postgres view layer via <code>/metrics/*</code> (60s refresh). Hours &amp; volume only — no dollars, no per-person rankings. · <a href="/dashboard/capacity_recurrence.html" style="color:#7ba3f5">Capacity &amp; Recurrence →</a></div>
 
 <div class="live"><span class="dot"></span><span id="working">Connecting to “who’s working now”…</span></div>
+
+<div class="card full" style="margin-bottom:16px"><h2>Active work — who’s working on what right now <span class="chip c-px" id="activeCount">–</span></h2>
+<div id="activeGrid" class="active-grid"></div>
+<div class="note">Live from open intervals (5&nbsp;s push · timer ticks per second). One card per FDE currently on a ticket — task name from the ticket DB, elapsed since they pressed start. One open interval per person; starting a new ticket auto-stops the last.</div></div>
 
 <div class="banner"><b>⚠ Time figures without interval coverage are PROXIES.</b> Until the <code>/on</code> toggle produces intervals, "work time" columns are calendar spans (In&nbsp;Progress→Done). <code>active_hours</code> is the real number and fills in as intervals accrue.</div>
 
@@ -130,11 +142,34 @@ async function load(){
 }
 load();setInterval(load,60000);
 
-// live "who's working now" via SSE
+// live "who's working now" via SSE — drives the strip + the Active work section.
+// Timers mustn't drift with client/server clock skew, so they're anchored to the
+// server-computed minutes_open at push time plus locally-measured elapsed since.
+let activeRows=[], rxAt=Date.now();
+const esc=x=>(x??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function fmtDur(ms){const s=Math.max(0,Math.floor(ms/1000)),h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;
+  return (h?String(h).padStart(2,"0")+":":"")+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0");}
+function tickTimers(){const extra=Date.now()-rxAt;
+  document.querySelectorAll("#activeGrid .timer").forEach(el=>el.textContent=fmtDur(+el.dataset.base+extra));}
+function renderActive(){
+  const grid=document.getElementById("activeGrid"),badge=document.getElementById("activeCount"),strip=document.getElementById("working");
+  badge.textContent=activeRows.length?`${activeRows.length} active`:"idle";
+  badge.className="chip "+(activeRows.length?"c-ok":"c-px");
+  if(!activeRows.length){
+    grid.innerHTML=`<div class="aw-empty">Nobody has an open interval right now. A card appears the moment an FDE starts a ticket via the Notion button.</div>`;
+    strip.textContent="Nobody has an open interval right now.";return;}
+  grid.innerHTML=activeRows.map(r=>`<div class="aw">
+    <div class="who"><span class="pulse"></span>${esc(r.person)}</div>
+    <div class="task">${esc(r.ticket)||"<span style='color:#565e72'>(untitled ticket)</span>"}</div>
+    <div class="meta"><span>${esc(r.client)||"—"}</span><span class="timer" data-base="${(+r.minutes_open||0)*60000}"></span></div>
+  </div>`).join("");
+  tickTimers();
+  strip.textContent=`Working now: ${activeRows.map(r=>r.person).join(", ")}`;
+}
 const es=new EventSource("/stream/working");
-es.onmessage=e=>{const rows=JSON.parse(e.data);const el=document.getElementById("working");
-  el.textContent=rows.length?`Working now: ${rows.map(r=>`${r.person} on ${r.client||"?"} (${Math.round(r.minutes_open)}m)`).join(" · ")}`:"Nobody has an open interval right now.";};
+es.onmessage=e=>{try{activeRows=JSON.parse(e.data)||[];}catch{activeRows=[];}rxAt=Date.now();renderActive();};
 es.onerror=()=>{document.getElementById("working").textContent="Live stream disconnected — retrying…";};
+setInterval(tickTimers,1000);
 </script>
 </body>
 </html>
