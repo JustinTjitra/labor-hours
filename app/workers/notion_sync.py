@@ -17,9 +17,10 @@ from datetime import datetime, timezone
 from .. import db, notion
 from ..config import settings
 
-# Field-name -> our column map for the Client Feedback Master DB. Adjust the
-# left-hand strings to the exact Notion property names if they differ.
-_STATUS_ORDER = ["Not Started", "In Progress", "Blocked", "REVIEW", "QA Failed", "Done"]
+# Status lifecycle order. NOTE the review stage is literally "👀 REVIEW" (with the
+# emoji) in the live DB and its copy — matching plain "REVIEW" would break backward
+# (reopen) detection around review.
+_STATUS_ORDER = ["Not Started", "In Progress", "Blocked", "👀 REVIEW", "QA Failed", "Done"]
 
 
 def _is_backward(from_status: str | None, to_status: str) -> bool:
@@ -78,9 +79,10 @@ async def sync_tickets() -> int:
     async for page in notion.iter_pages(settings.notion_ticket_db_id, since=since):
         p = page["properties"]
         ticket_id = page["id"]
-        new_status = notion.prop_status(p, "Status")
+        new_status = notion.prop_status(p, "Status")  # handles select OR status type
 
         prev = await db.fetchrow("SELECT status FROM tickets WHERE id = $1", ticket_id)
+        first_seen = prev is None
         old_status = prev["status"] if prev else None
 
         await db.execute(
@@ -101,7 +103,7 @@ async def sync_tickets() -> int:
                  status_last_updated=EXCLUDED.status_last_updated, due_date=EXCLUDED.due_date,
                  last_edited_time=EXCLUDED.last_edited_time, updated_at=now()""",
             ticket_id,
-            _int(notion.prop_number(p, "ID")),
+            notion.prop_unique_id(p, "ID"),
             notion.prop_title(p, "Feedback"),
             new_status,
             notion.prop_select(p, "Change Type"),
@@ -120,7 +122,11 @@ async def sync_tickets() -> int:
             notion.prop_created_or_edited(page, "last_edited_time"),
         )
 
-        if new_status and new_status != old_status:
+        # Only log a transition for tickets we already knew about. On first import
+        # every ticket would otherwise look like a change (NULL -> current), flooding
+        # ticket_transitions with ~600 rows and fabricating reopens for anything
+        # currently in QA Failed.
+        if not first_seen and new_status and new_status != old_status:
             await _record_transition(ticket_id, old_status, new_status)
         n += 1
     return n
@@ -154,6 +160,11 @@ async def _record_transition(ticket_id: str, from_status: str | None, to_status:
 
 
 async def run_once() -> dict:
+    # No token = no sync (yet). Skip cleanly so a deployed worker doesn't 401 every
+    # tick before the integration token is configured; the button path and the other
+    # jobs (auto-closer, outbox) keep working regardless.
+    if not settings.notion_token:
+        return {"skipped": "no NOTION_TOKEN", "at": datetime.now(timezone.utc).isoformat()}
     clients = await sync_clients()
     tickets = await sync_tickets()
     return {"clients": clients, "tickets": tickets, "at": datetime.now(timezone.utc).isoformat()}
@@ -161,7 +172,3 @@ async def run_once() -> dict:
 
 def _d(dt):
     return dt.date() if dt else None
-
-
-def _int(n):
-    return int(n) if n is not None else None

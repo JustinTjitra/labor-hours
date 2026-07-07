@@ -69,12 +69,22 @@ def prop_select(props: dict, key: str) -> str | None:
 
 
 def prop_status(props: dict, key: str) -> str | None:
-    st = (props.get(key) or {}).get("status")
-    return st.get("name") if st else None
+    """Read a Status value whether the property is Notion's `status` type or a
+    plain `select`. The Client Feedback DB (and its copy) uses `select`, so we must
+    accept both — reading only `.status` returns None for every ticket there."""
+    p = props.get(key) or {}
+    node = p.get("status") or p.get("select")
+    return node.get("name") if node else None
 
 
 def prop_number(props: dict, key: str) -> float | None:
     return (props.get(key) or {}).get("number")
+
+
+def prop_unique_id(props: dict, key: str) -> int | None:
+    """The auto-increment `ID` is a `unique_id` property: {number, prefix}."""
+    uid = (props.get(key) or {}).get("unique_id")
+    return uid.get("number") if uid else None
 
 
 def prop_person_id(props: dict, key: str) -> str | None:
