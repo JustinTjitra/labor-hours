@@ -1,0 +1,15 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "_comment": "Config for the WEB service (dashboard + metrics API + button/Slack webhooks + SSE). Railway reads this file by default. The worker service must set its config path to railway.worker.json in Settings -> Config-as-code.",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "python scripts/apply_all_sql.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT",
+    "healthcheckPath": "/healthz",
+    "healthcheckTimeout": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5
+  }
+}
