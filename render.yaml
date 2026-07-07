@@ -1,6 +1,6 @@
 # Render blueprint — Labor Hours dashboard + button ingest.
 #
-# Deploys a managed Postgres + the FastAPI web service. preDeploy applies schema +
+# Deploys a managed Postgres + the FastAPI web service. Boot applies schema +
 # views + seeds (the demo snap_* overlay is skipped — see scripts/apply_all_sql.py);
 # load real tickets with one pg_dump restore into the Render DB (see docs) or by
 # setting NOTION_TOKEN. The button webhook (POST /notion/button/<token>) works right
@@ -31,8 +31,10 @@ services:
     runtime: python
     plan: free                       # -> starter to stay warm for live button use
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: python scripts/apply_all_sql.py   # idempotent: schema+views+seed (no demo snapshot)
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # preDeployCommand is a PAID feature on Render, so the (idempotent) SQL apply —
+    # schema + views + seed, no demo snapshot — runs at boot instead. Adds ~2s to
+    # each cold start; harmless to re-run.
+    startCommand: python scripts/apply_all_sql.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
         fromDatabase: { name: labor-hours-db, property: connectionString }
