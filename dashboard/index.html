@@ -79,7 +79,18 @@ canvas{max-height:340px}
 <div class="note">All tickets ever reported, top 8 clients by volume; the rest fold into “All others”. Hover for counts. Tickets without a Client Page are excluded.</div></div>
 <div class="card"><h2>Active hours per client <span class="chip c-px">proxy until intervals accrue</span></h2><canvas id="cHours"></canvas></div>
 <div class="card"><h2>Per-FDE/SL task-type mix (%) — allocation, not ranking</h2><canvas id="cFde"></canvas></div>
+<div class="card"><h2>Per-FDE/SL stage mix — where open tickets sit</h2><canvas id="cFdeStage"></canvas>
+<div class="note">Open (non-Done) tickets per person by current status. Allocation view, not a ranking.</div></div>
 <div class="card"><h2>Open backlog by client × status</h2><canvas id="cBack"></canvas></div>
+
+<div class="card"><h2>Weekly volume by client phase <span class="chip c-px">decay proxy</span></h2><canvas id="cPhase"></canvas>
+<div class="note">Volume stands in for hours until intervals accrue. Healthy = later-phase share shrinking. Caveat: colored by the client's <i>current</i> phase (history isn't stored).</div></div>
+<div class="card"><h2>Time to Copilot / Autopilot per client</h2><canvas id="cTTA"></canvas>
+<div class="note">Days from scoping to each phase gate, clients with recorded dates. The cohort baseline for feature metric #6.</div></div>
+
+<div class="card full"><h2>SL capacity — hot clients right now <span class="chip c-px">triage span is a calendar proxy</span></h2>
+<table><thead><tr><th>Client</th><th>Tickets/week (4-wk avg)</th><th>Open backlog</th><th>Median triage days</th><th>Triage samples</th></tr></thead><tbody id="tSL"></tbody></table>
+<div class="note">Triage = reported → moved-to-In-Progress; only tickets carrying that stamp count (see samples column).</div></div>
 
 <div class="card full"><h2>QA-failed / recurrence signals</h2>
 <table><thead><tr><th>Client</th><th>Signal</th><th>Priority</th></tr></thead><tbody id="tRec"></tbody></table></div>
@@ -126,12 +137,13 @@ function stack(rows,keyF,typeF,valF,horizontal){
 }
 
 async function load(){
-  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap]=await Promise.all([
+  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap]=await Promise.all([
     api("data-quality"),api("by-week-type"),api("by-client-type"),api("by-fde-type"),
     api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
     api("throughput"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
     api("priority-age"),api("arrival-dow"),api("change-type-coverage"),
-    api("capacity-recurrence")]);
+    api("capacity-recurrence"),api("fde-stage-mix"),api("time-to-autopilot"),
+    api("volume-by-phase"),api("sl-capacity")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -229,10 +241,35 @@ async function load(){
 
   // backlog by status
   const bst=stack(back.filter(r=>r.client),r=>r.client,r=>r.status,r=>r.tickets);
-  const statusColor={"Not Started":"#565e72","In Progress":"#f0b429","REVIEW":"#a371f7","QA Failed":"#e5534b","Blocked":"#8b2f2a"};
+  const statusColor={"Not Started":"#565e72","In Progress":"#f0b429","👀 REVIEW":"#a371f7","REVIEW":"#a371f7","QA Failed":"#e5534b","Blocked":"#8b2f2a"};
   bst.datasets.forEach(d=>d.backgroundColor=statusColor[d.label]||"#5b8def");
   draw("cBack",{type:"bar",data:{labels:bst.labels,datasets:bst.datasets},
     options:{indexAxis:"y",scales:{x:{stacked:true},y:{stacked:true}}}});
+
+  // per-FDE stage mix (open tickets by current status)
+  const fs=stack(fstage,r=>r.fde,r=>r.status,r=>r.tickets);
+  fs.datasets.forEach(d=>d.backgroundColor=statusColor[d.label]||"#5b8def");
+  draw("cFdeStage",{type:"bar",data:{labels:fs.labels,datasets:fs.datasets},
+    options:{indexAxis:"y",scales:{x:{stacked:true,title:{display:true,text:"open tickets"}},y:{stacked:true}}}});
+
+  // weekly volume by client phase (decay proxy)
+  const phaseColor={"Development":"#7ba3f5","Copilot":"#f0b429","Autopilot":"#a371f7","Stable":"#4cc38a","No phase":"#565e72"};
+  const vp=stack(vphase,r=>r.iso_week,r=>r.phase,r=>r.tickets);
+  vp.datasets.forEach(d=>d.backgroundColor=phaseColor[d.label]||"#565e72");
+  draw("cPhase",{type:"bar",data:{labels:vp.labels,datasets:vp.datasets},
+    options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
+
+  // time to Copilot / Autopilot per client
+  draw("cTTA",{type:"bar",data:{labels:tta.map(r=>r.client),datasets:[
+    {label:"days scoping → Copilot",data:tta.map(r=>r.days_scoping_to_copilot),backgroundColor:"#f0b429aa"},
+    {label:"days scoping → Autopilot",data:tta.map(r=>r.days_scoping_to_autopilot),backgroundColor:"#a371f7aa"}]},
+    options:{indexAxis:"y",scales:{x:{title:{display:true,text:"days from scoping"}}}}});
+
+  // SL capacity table (hot clients by recent inflow)
+  document.getElementById("tSL").innerHTML=slcap.slice(0,12).map(r=>
+    `<tr><td><b>${r.client}</b></td><td>${r.tickets_per_week}</td><td>${r.open_backlog}</td>`+
+    `<td>${r.median_triage_days??"—"}</td><td class=note>${r.triage_samples}</td></tr>`).join("")
+    ||`<tr><td colspan=5 class=note>No tickets reported in the last 28 days.</td></tr>`;
 
   // signals table (QA failed + recurrence)
   const sig=[...qaf.map(r=>[r.client,r.feedback,r.priority||""]),

@@ -64,12 +64,18 @@ async def sync_clients() -> int:
                  fde_user_id=EXCLUDED.fde_user_id, sl_user_id=EXCLUDED.sl_user_id,
                  last_edited_time=EXCLUDED.last_edited_time, updated_at=now()""",
             page["id"],
-            notion.prop_title(p, "Client Name"),
-            notion.prop_select(p, "Phase"),
-            (notion.prop_select(p, "Alive?") or "").lower() in ("alive", "yes", "true"),
+            # A brand-new client page can have an empty title — NOT NULL guard.
+            notion.prop_title(p, "Client Name") or "(unnamed client)",
+            # Phase and "Alive?" are STATUS-type properties in the master clients
+            # DB — prop_select returns None for those and had been NULLing phase
+            # (and defaulting alive to false) on every sync.
+            notion.prop_status(p, "Phase"),
+            (notion.prop_status(p, "Alive?") or "").lower() in ("alive", "yes", "true"),
             _d(notion.prop_date(p, "Scoping Date")),
-            _d(notion.prop_date(p, "Actual Copilot")),
-            _d(notion.prop_date(p, "Actual Autopilot")),
+            # Exact Notion property names — "Actual Copilot"/"Actual Autopilot"
+            # silently missed (prop_date is exact-key) and left the dates NULL.
+            _d(notion.prop_date(p, "Actual Copilot Launch Date")),
+            _d(notion.prop_date(p, "Actual Autopilot Date")),
             notion.prop_person_id(p, "FDE"),
             notion.prop_person_id(p, "SL"),
             notion.prop_created_or_edited(page, "last_edited_time"),

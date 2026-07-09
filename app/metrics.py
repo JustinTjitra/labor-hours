@@ -33,6 +33,11 @@ _VIEWS = {
     "arrival-dow": "v_flow_arrival_dow",
     # change-type classifier coverage (db/04, Kennard)
     "change-type-coverage": "v_change_type_coverage",
+    # catalog items unblocked by real data (db/07) — proxies labelled as such
+    "fde-stage-mix": "v_fde_stage_mix",
+    "time-to-autopilot": "v_time_to_autopilot",
+    "volume-by-phase": "v_volume_by_phase_week",
+    "sl-capacity": "v_sl_capacity",
 }
 
 
