@@ -49,7 +49,7 @@ services:
       - key: NOTION_WRITE_ENABLED
         value: "false"               # hard-off; nothing is written back to Notion
       - key: NOTION_TICKET_DB_ID
-        value: 39581b4e-061b-8047-befc-e4b9301ad6e0   # sandbox COPY
+        value: 35281b4e-061b-81c3-af8a-000bf14667ba   # REAL master Client Feedback DB
 
   # --- Worker: 2-min Notion sync + auto-closers + outbox flush ------------------
   # Render background workers are a PAID feature (not free tier). Uncomment once you
@@ -70,4 +70,4 @@ services:
   #     - key: NOTION_WRITE_ENABLED
   #       value: "false"
   #     - key: NOTION_TICKET_DB_ID
-  #       value: 39581b4e-061b-8047-befc-e4b9301ad6e0
+  #       value: 35281b4e-061b-81c3-af8a-000bf14667ba   # REAL master Client Feedback DB
