@@ -9,8 +9,11 @@ class Settings(BaseSettings):
     # Notion — ticket system of record. Sync is read-mostly; the only write-back
     # is a status nudge to In Progress when an interval starts on an idle ticket.
     notion_token: str = ""
-    notion_ticket_db_id: str = "35281b4e-061b-81c3-af8a-000bf14667ba"   # Client Feedback Master DB
-    notion_clients_db_id: str = "35681b4e-061b-80e5-b343-000b87756985"  # Master Clients DB
+    # DATABASE ids (from the DB page URL), NOT data-source/collection ids — the REST
+    # /databases/{id}/query endpoint 404s on a data-source id. For the master ticket
+    # DB: database 35281b4e-061b-80ba-…, data source 35281b4e-061b-81c3-… (differ!).
+    notion_ticket_db_id: str = "35281b4e-061b-80ba-8444-c80960da8ccf"   # Client Feedback Master DB
+    notion_clients_db_id: str = "35681b4e-061b-80a8-94ed-f52c5941dc0d"  # Master Clients DB
     notion_api_base: str = "https://api.notion.com/v1"
     notion_version: str = "2022-06-28"
 

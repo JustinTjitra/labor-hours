@@ -49,7 +49,9 @@ services:
       - key: NOTION_WRITE_ENABLED
         value: "false"               # hard-off; nothing is written back to Notion
       - key: NOTION_TICKET_DB_ID
-        value: 35281b4e-061b-81c3-af8a-000bf14667ba   # REAL master Client Feedback DB
+        value: 35281b4e-061b-80ba-8444-c80960da8ccf   # REAL master Client Feedback DB (DATABASE id, not data-source id)
+      - key: NOTION_CLIENTS_DB_ID
+        value: 35681b4e-061b-80a8-94ed-f52c5941dc0d   # Master Clients DB (DATABASE id)
 
   # --- Worker: 2-min Notion sync + auto-closers + outbox flush ------------------
   # ENABLED. Render background workers are a PAID feature — this service needs a paid
@@ -71,4 +73,6 @@ services:
       - key: NOTION_WRITE_ENABLED
         value: "false"
       - key: NOTION_TICKET_DB_ID
-        value: 35281b4e-061b-81c3-af8a-000bf14667ba   # REAL master Client Feedback DB
+        value: 35281b4e-061b-80ba-8444-c80960da8ccf   # REAL master Client Feedback DB (DATABASE id, not data-source id)
+      - key: NOTION_CLIENTS_DB_ID
+        value: 35681b4e-061b-80a8-94ed-f52c5941dc0d   # Master Clients DB (DATABASE id)
