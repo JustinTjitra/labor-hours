@@ -14,17 +14,24 @@ INSERT INTO fde_map (label, notion_user_id) VALUES
   ('SL-Harvey',        '1088aecb-decc-4952-973b-8196537f169a')
 ON CONFLICT (notion_user_id) DO UPDATE SET label = EXCLUDED.label;
 
--- Expanded Change Type taxonomy (build-order step 1). AI Fix / PRD Change already
--- exist in Notion; the rest are the additions that replace 41% "Untyped".
+-- Change Type taxonomy (revised 2026-07-09, Harvey). AI Fix / PRD Change are the
+-- human values engineers set in Notion; the four issue-nature buckets are what
+-- the classifier proposes for untyped tickets:
+--   Tool Issue       — problem with the tool/product itself
+--   Behavioral Issue — styling/tone not human-agent-like; aggressive nudging
+--   Flow Issue       — lead->sale stages: first contact -> data collection -> checkout
+--   Data Processing  — misinterpreting user meaning / misunderstanding collected data
+-- The old expanded categories (Client Comms, Testing/QA, Scoping/Spec Creation,
+-- Monitoring/Confirmation, Training) are retired; their DELETE lives in db/04
+-- because it must run after change_type_inferences exists.
 INSERT INTO change_types (name, sort_order) VALUES
   ('AI Fix', 10),
   ('PRD Change', 20),
-  ('Client Comms', 30),
-  ('Testing/QA', 40),
-  ('Scoping/Spec Creation', 50),
-  ('Monitoring/Confirmation', 60),
-  ('Training', 70),
-  ('Other', 80)
+  ('Tool Issue', 30),
+  ('Behavioral Issue', 40),
+  ('Flow Issue', 50),
+  ('Data Processing', 60),
+  ('Other', 90)
 ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order;
 
 -- The 22-metric catalog — authoritative spec for which views to build and what

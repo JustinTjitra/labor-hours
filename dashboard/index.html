@@ -107,8 +107,12 @@ canvas{max-height:340px}
 const C={fix:"#4cc38a",prd:"#f0b429",unt:"#565e72"};
 Chart.defaults.color="#8b93a7";Chart.defaults.borderColor="#262b3a";
 const api=s=>fetch("/metrics/"+s).then(r=>r.json());
-const TYPES=["AI Fix","PRD Change","Untyped"];
-const colorFor=t=>t==="AI Fix"?C.fix:t==="PRD Change"?C.prd:C.unt;
+// Fixed hue per change type (never cycled). AI Fix / PRD Change are human Notion
+// values; the four issue-nature buckets are classifier inferences (2026-07-09).
+const TYPE_COLORS={"AI Fix":C.fix,"PRD Change":C.prd,
+  "Tool Issue":"#7ba3f5","Behavioral Issue":"#a371f7","Flow Issue":"#53c9c9",
+  "Data Processing":"#e07b53","Other":"#8a8a8a","Untyped":C.unt};
+const colorFor=t=>TYPE_COLORS[t]||C.unt;
 const charts={};
 function draw(id,cfg){if(charts[id])charts[id].destroy();charts[id]=new Chart(document.getElementById(id),cfg);}
 

@@ -13,18 +13,22 @@ from app.workers.change_type_classifier import classify, TAXONOMY  # noqa: E402
 
 
 # (feedback, expected_category) — clear-cut cases we commit to.
+# Taxonomy revised 2026-07-09: the classifier proposes only the four
+# issue-nature buckets (Tool / Behavioral / Flow / Data Processing).
 CLEAR = [
-    ("Fix pushy CTA", "AI Fix"),
-    ("Fix English in payment confirmation (aftersales)", "AI Fix"),
-    ("Fix AI inventing child names", "AI Fix"),
-    ("Fix AI hallucinating phone", "AI Fix"),
-    ("output currently overall too long", "AI Fix"),
-    ("API error after greeting", "AI Fix"),
-    ("Wrong pricing for Omnia Bundling with Reina", "AI Fix"),
-    ("Repetitive main info on going schedule", "AI Fix"),
-    ("Integrate with their Product API", "PRD Change"),
-    ("register payment success tool", "PRD Change"),
-    ("Implement gcal integration", "PRD Change"),
+    ("API error after greeting", "Tool Issue"),
+    ("Register New patient doesn't save patientId", "Tool Issue"),
+    ("Pickup date time column doesn't save date", "Tool Issue"),
+    ("Change wording of kapan bisanya", "Behavioral Issue"),
+    ("Intro message is too long", "Behavioral Issue"),
+    ("Nudge too aggressively in follow ups", "Behavioral Issue"),
+    ("Too many emojis in replies", "Behavioral Issue"),
+    ("shouldn't escalate", "Flow Issue"),
+    ("Falsely escalated to customer service", "Flow Issue"),
+    ("Didn't ask for whatsapp number", "Flow Issue"),
+    ("Hallucinated available slots", "Data Processing"),
+    ("Fix AI hallucinating phone", "Data Processing"),
+    ("Wrong Date, 8th June is Monday not Sunday", "Data Processing"),
 ]
 
 
@@ -37,15 +41,16 @@ def test_clear_cases():
         )
 
 
-def test_confirmation_noun_does_not_trigger_monitoring():
-    # The 'confirmation' trap: this must be AI Fix, never Monitoring/Confirmation.
-    got = classify("Fix English in payment confirmation")
-    assert got.category == "AI Fix"
+def test_wording_beats_checkout_stage():
+    # "wording of payment confirmation": Behavioral (wording=3) must win over
+    # Flow (payment=2 + confirmation=1) — taxonomy order breaks the tie.
+    got = classify("Change wording of payment confirmation")
+    assert got.category == "Behavioral Issue"
 
 
-def test_api_bug_is_not_prd_change():
-    # 'API' alone must not pull a behaviour bug into PRD Change.
-    assert classify("API error after greeting").category == "AI Fix"
+def test_tool_malfunction_beats_flow_stage():
+    # A registration-stage ticket about a SAVE failure is a Tool Issue.
+    assert classify("Register New patient doesn't save patientId").category == "Tool Issue"
 
 
 def test_empty_is_unclassifiable():
@@ -60,12 +65,13 @@ def test_no_signal_falls_back_to_other_low():
     assert got.confidence == "low"
 
 
-def test_trace_signal_nudges_ai_fix():
-    # A neutral string that otherwise scores nothing tips to AI Fix with a trace.
-    base = classify("update the thing", has_trace=False)
-    traced = classify("update the thing", has_trace=True)
-    assert traced.category == "AI Fix"
-    assert traced.score > base.score
+def test_trace_flag_is_a_noop():
+    # has_trace used to nudge the human "AI Fix" label; since the taxonomy
+    # revision the classifier only proposes issue-nature buckets, so no effect.
+    base = classify("Hallucinated available slots", has_trace=False)
+    traced = classify("Hallucinated available slots", has_trace=True)
+    assert traced.category == base.category
+    assert traced.score == base.score
 
 
 def test_every_category_is_in_taxonomy():

@@ -7,8 +7,9 @@ off task category:
   * Per-FDE/SL task-type mix
   * Task-type mix per client
 
-This worker reads a ticket's Feedback title and proposes one of the 8 taxonomy
-types from `change_types` (db/02_seed.sql). It NEVER overwrites a human-set value:
+This worker reads a ticket's Feedback title and proposes one of the four
+issue-nature buckets from `change_types` (db/02_seed.sql): Tool Issue,
+Behavioral Issue, Flow Issue, Data Processing. It NEVER overwrites a human-set value:
 it only scans tickets where `change_type IS NULL`, and it writes to its own table
 (`change_type_inferences`, db/04). The `v_change_type_effective` view then serves
 COALESCE(human, inferred) so a real engineer label always wins.
@@ -29,74 +30,69 @@ from datetime import datetime, timezone
 # isolation. Only the DB path needs the repo's asyncpg pool.
 
 # The authoritative taxonomy (must match change_types in db/02_seed.sql).
+# "AI Fix"/"PRD Change" are the HUMAN values engineers set in Notion — they stay
+# valid but the classifier never proposes them. Inferences use the four
+# issue-nature buckets below (taxonomy revised 2026-07-09 per Harvey).
 TAXONOMY = [
     "AI Fix",
     "PRD Change",
-    "Client Comms",
-    "Testing/QA",
-    "Scoping/Spec Creation",
-    "Monitoring/Confirmation",
-    "Training",
+    "Tool Issue",         # problem with the tool/product itself
+    "Behavioral Issue",   # styling/tone not human-agent-like; aggressive nudging
+    "Flow Issue",         # lead->sale stages: first contact -> data collection -> checkout
+    "Data Processing",    # misinterpreting user meaning / misunderstanding collected data
     "Other",
 ]
 
 # Weighted keyword rules. Each entry: (category, weight, pattern, why).
-# Scoring (not first-match) avoids order bugs, e.g. "Fix English in payment
-# confirmation" must score AI Fix on "fix", NOT Monitoring on "confirmation" —
-# so Monitoring intentionally does not match the bare noun "confirmation".
+# Scoring (not first-match) avoids order bugs — a title matching several buckets
+# goes to the highest summed weight, e.g. "wording of payment confirmation" is
+# Behavioral (wording 3) over Flow (checkout 2).
 #   weight 3 = strong signal, 2 = medium, 1 = weak/supporting.
 _RULES: list[tuple[str, int, str, str]] = [
-    # --- AI Fix: the agent's behaviour/output is wrong and needs correcting ---
-    ("AI Fix", 3, r"\bfix(es|ed|ing)?\b", "'fix' verb"),
-    ("AI Fix", 3, r"\bhallucinat", "hallucination"),
-    ("AI Fix", 3, r"\binvent(s|ing|ed)?\b", "inventing content"),
-    ("AI Fix", 3, r"\berror(s)?\b", "error"),
-    ("AI Fix", 3, r"\b(wrong|incorrect|broken|bug)\b", "wrong/broken"),
-    ("AI Fix", 2, r"\b(too long|too short|overall too)\b", "output length"),
-    ("AI Fix", 2, r"\brepetit|repeat(s|ing|ed)?\b", "repetition"),
-    ("AI Fix", 2, r"\b(hallucinating|inventing) (phone|name|price|schedule)", "fabricated field"),
-    ("AI Fix", 2, r"\b(pushy|tone|wording|phrasing|language)\b", "tone/wording"),
-    ("AI Fix", 2, r"\b(should( not)? escalate|mis-?escalat)", "escalation behaviour"),
-    ("AI Fix", 2, r"\b(pricing|price)\b", "pricing output"),
-    ("AI Fix", 1, r"\b(greeting|salutation|cta|response|output|reply|prompt\d*)\b", "response element"),
-    ("AI Fix", 1, r"\bconsistent\b", "consistency"),
+    # --- Tool Issue: the tool/product itself malfunctions ----------------------
+    ("Tool Issue", 3, r"\berror(s)?\b", "error"),
+    ("Tool Issue", 3, r"\b(bug|crash|broken)\b", "broken tool"),
+    ("Tool Issue", 3, r"\bdoesn'?t (save|work|load|sync|send|trigger|exist)\b", "tool malfunction"),
+    ("Tool Issue", 3, r"\bapi\b", "API"),
+    ("Tool Issue", 2, r"\bfail(s|ed|ing)?\b", "failure"),
+    ("Tool Issue", 2, r"\b(tool|webhook|endpoint|integration|portal|dashboard)\b", "tool noun"),
+    ("Tool Issue", 2, r"\bnot (working|saving|sending|loading)\b", "not working"),
+    ("Tool Issue", 1, r"\b(sheet|calendar|logger|checkpoint)\b", "tool surface"),
 
-    # --- PRD Change: new/changed product requirement, tool, or integration ----
-    ("PRD Change", 3, r"\bintegrat", "integration"),
-    ("PRD Change", 3, r"\bimplement", "implement"),
-    ("PRD Change", 2, r"\b(build|develop|create)\b", "build/create"),
-    ("PRD Change", 2, r"\bregister\b", "register"),
-    ("PRD Change", 2, r"\b(tool|feature|webhook|endpoint)\b", "tool/feature noun"),
-    ("PRD Change", 2, r"\bnew (tool|feature|flow|page|button|integration)\b", "new capability"),
-    ("PRD Change", 2, r"\b(set ?up|enable)\b", "setup/enable"),
-    ("PRD Change", 1, r"\badd (a |an |the )?\w+", "add capability"),
+    # --- Behavioral Issue: styling/tone, not what a human agent would say ------
+    ("Behavioral Issue", 3, r"\b(tone|wording|phras\w*|styling|stylistic)\b", "tone/wording"),
+    ("Behavioral Issue", 3, r"\b(too formal|informal|emoji)\w*", "register/emoji"),
+    ("Behavioral Issue", 3, r"\b(pushy|aggressive|nudg\w*)", "aggressive nudging"),
+    ("Behavioral Issue", 2, r"\b(too long|too short|text wall|overly)\b", "verbosity"),
+    ("Behavioral Issue", 2, r"\brepetit\w*|\brepeat(s|ed|ing)?\b|\bredundant\b", "repetition"),
+    ("Behavioral Issue", 2, r"\b(unnatural|natural|robotic|human)\b", "doesn't sound human"),
+    ("Behavioral Issue", 2, r"\b(greeting|salutation)\b", "greeting style"),
+    ("Behavioral Issue", 2, r"\b(contradict\w*|disjointed)\b", "contradictory messaging"),
+    ("Behavioral Issue", 1, r"\b(bubble|message|response|reply|say(s|ing)?)\b", "response element"),
 
-    # --- Client Comms: outbound communication to/for the client ---------------
-    ("Client Comms", 2, r"\bbrochure\b", "brochure"),
-    ("Client Comms", 2, r"\b(email|message|reach out|follow[- ]?up)\b.*\bclient\b", "contact client"),
-    ("Client Comms", 2, r"\bsend .*(to (the )?client|brochure|artifact)\b", "send to client"),
-    ("Client Comms", 1, r"\b(comms|communicat)\w*", "comms"),
+    # --- Flow Issue: lead->sale stage handling ---------------------------------
+    ("Flow Issue", 3, r"\bescalat\w*", "escalation step"),
+    ("Flow Issue", 3, r"\bflow\b", "flow"),
+    ("Flow Issue", 2, r"\b(step|stage|sop)\b", "stage/SOP"),
+    ("Flow Issue", 2, r"\b(checkout|payment|cart|purchase|invoice)\b", "checkout stage"),
+    ("Flow Issue", 2, r"\bbook(ing|ed|s)?\b", "booking stage"),
+    ("Flow Issue", 2, r"\bregist(er|ers|ered|ration)\b", "registration stage"),
+    ("Flow Issue", 2, r"\b(lead status|lead\b|routing|rerout\w*|handoff)\b", "lead routing"),
+    ("Flow Issue", 2, r"\b(should|doesn'?t|didn'?t) ask\b", "data-collection ask"),
+    ("Flow Issue", 2, r"\bfollow[- ]?up\b", "follow-up stage"),
+    ("Flow Issue", 1, r"\bform\b", "form"),
+    ("Flow Issue", 1, r"\bconfirm\w*\b", "confirmation step"),
 
-    # --- Testing / QA ---------------------------------------------------------
-    ("Testing/QA", 3, r"\bqa\b", "QA"),
-    ("Testing/QA", 3, r"\btest(s|ing|ed)?\b", "testing"),
-    ("Testing/QA", 2, r"\b(regression|retest|reproduc)", "regression/reproduce"),
-    ("Testing/QA", 2, r"\bverify that\b", "verification"),
-
-    # --- Scoping / Spec Creation ----------------------------------------------
-    ("Scoping/Spec Creation", 3, r"\bscop(e|ing)\b", "scoping"),
-    ("Scoping/Spec Creation", 2, r"\b(spec|specification|requirements?)\b", "spec/requirements"),
-    ("Scoping/Spec Creation", 2, r"\bprd creation\b", "PRD creation"),
-
-    # --- Monitoring / Confirmation (verbs only — never the noun 'confirmation')
-    ("Monitoring/Confirmation", 3, r"\bmonitor(s|ing|ed)?\b", "monitoring"),
-    ("Monitoring/Confirmation", 3, r"\bwatchtower\b", "Watchtower"),
-    ("Monitoring/Confirmation", 2, r"\b(keep an eye|sanity check|reconfirm)\b", "ongoing check"),
-
-    # --- Training -------------------------------------------------------------
-    ("Training", 3, r"\btrain(s|ing|ed)?\b", "training"),
-    ("Training", 2, r"\bonboard", "onboarding"),
-    ("Training", 2, r"\b(sop|write .*guide|document how|teach)\b", "docs/teaching"),
+    # --- Data Processing: misreading the user / mishandling collected data -----
+    ("Data Processing", 3, r"\bhallucinat\w*", "hallucinated data"),
+    ("Data Processing", 3, r"\b(misunderst|misread|misinterpret)\w*", "misinterpretation"),
+    ("Data Processing", 3, r"\bwrong (date|day|time|name|number|info|schedule|price|answer)\b", "wrong data value"),
+    ("Data Processing", 2, r"\bconfus\w*", "confusion"),
+    ("Data Processing", 2, r"\b(wrong|incorrect|inaccurate|falsely)\b", "incorrect output"),
+    ("Data Processing", 2, r"\bassum(es|ed|ing|ption)?\b", "wrong assumption"),
+    ("Data Processing", 2, r"\binvent(s|ed|ing)?\b", "fabricated data"),
+    ("Data Processing", 2, r"\b(availab\w*|unavailab\w*)\b", "availability data"),
+    ("Data Processing", 1, r"\b(date|birthday|format\w*)\b", "date/format handling"),
 ]
 
 _COMPILED = [(cat, w, re.compile(pat, re.IGNORECASE), why) for cat, w, pat, why in _RULES]
@@ -117,9 +113,9 @@ class Classification:
 def classify(feedback: str | None, has_trace: bool = False) -> Classification:
     """Score `feedback` against the rule set and return the best taxonomy match.
 
-    `has_trace`: pass True when the ticket has a Langsmith trace URL. A trace means
-    an agent run was inspected, which nudges toward AI Fix. It defaults False
-    because notion_sync does not currently sync that column (see README).
+    `has_trace`: kept for signature compatibility. It used to nudge toward the
+    human "AI Fix" label, but since the 2026-07-09 taxonomy revision the
+    classifier only proposes the four issue-nature buckets, so it is a no-op.
     """
     text = (feedback or "").strip()
     if not text:
@@ -131,10 +127,6 @@ def classify(feedback: str | None, has_trace: bool = False) -> Classification:
         if rx.search(text):
             scores[cat] += weight
             hits[cat].append(why)
-
-    if has_trace:
-        scores["AI Fix"] += 1
-        hits["AI Fix"].append("has Langsmith trace")
 
     best = max(TAXONOMY, key=lambda c: scores[c])
     top = scores[best]

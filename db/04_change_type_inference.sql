@@ -38,6 +38,19 @@ SELECT
 FROM tickets t
 LEFT JOIN change_type_inferences ci ON ci.ticket_id = t.id;
 
+-- Migration (2026-07-09 taxonomy revision): retire the old expanded categories.
+-- Inferences referencing them are deleted (the classifier re-proposes into the
+-- new buckets on its next run); then the taxonomy rows themselves go. Lives here
+-- rather than 02_seed.sql because change_type_inferences must exist first.
+-- Idempotent: both DELETEs are no-ops once the old names are gone.
+-- 'AI Fix'/'PRD Change' stay in change_types (human Notion values) but the new
+-- classifier never PROPOSES them — inference rows carrying them are old-scheme.
+DELETE FROM change_type_inferences WHERE inferred_type IN
+  ('Client Comms', 'Testing/QA', 'Scoping/Spec Creation', 'Monitoring/Confirmation', 'Training',
+   'AI Fix', 'PRD Change');
+DELETE FROM change_types WHERE name IN
+  ('Client Comms', 'Testing/QA', 'Scoping/Spec Creation', 'Monitoring/Confirmation', 'Training');
+
 -- Coverage readout: how much of the untyped backlog the classifier now fills,
 -- and at what confidence. Handy for a one-line "are we still starved?" check.
 CREATE OR REPLACE VIEW v_change_type_coverage AS
