@@ -7,11 +7,10 @@
 -- (wall-clock, not active work time) — label them as such on any surface.
 -- Counts and spans only: no dollars, no per-person speed metrics (guardrails).
 --
--- This file ALSO redefines the three by-type views from 03_views.sql so they
--- fall back to the change-type classifier's inferences (db/04): a human-set
--- Notion value ALWAYS wins; the inference only fills previously-Untyped rows.
--- Lives here (not in 03) because name-ordered apply means 04's table must
--- exist first.
+-- This file ALSO redefines the three by-type views from 03_views.sql. Per
+-- Harvey (2026-07-09) they surface HUMAN-set Notion types only (AI Fix /
+-- PRD Change / Untyped); classifier inferences stay backend-only. See the
+-- BY-TYPE VIEWS section below for how to re-enable the inference fallback.
 -- ===========================================================================
 
 -- --- THROUGHPUT --------------------------------------------------------------
@@ -117,13 +116,16 @@ WHERE reported_date IS NOT NULL
 GROUP BY 1, 2
 ORDER BY 2;
 
--- --- BY-TYPE VIEWS, UPGRADED TO EFFECTIVE CHANGE TYPE ------------------------
--- Same names/shapes as 03_views.sql; only the type column changes source:
--- human Notion value > classifier inference > 'Untyped'.
+-- --- BY-TYPE VIEWS (human-only types, per Harvey 2026-07-09) ------------------
+-- Same names/shapes as 03_views.sql. Inferred categories are NOT surfaced:
+-- anything an engineer hasn't typed in Notion displays as 'Untyped'. The
+-- classifier still writes change_type_inferences (audit/backend only) — to
+-- surface inferences again, restore COALESCE(t.change_type, ci.inferred_type,
+-- 'Untyped') with a LEFT JOIN change_type_inferences ci.
 CREATE OR REPLACE VIEW v_by_client_type AS
 SELECT
   c.name                                                    AS client,
-  COALESCE(t.change_type, ci.inferred_type, 'Untyped')      AS change_type,
+  COALESCE(t.change_type, 'Untyped')      AS change_type,
   COUNT(*)                                                  AS tickets,
   AVG(EXTRACT(EPOCH FROM (t.moved_to_done - t.reported_date)) / 86400.0)       AS proxy_avg_days_reported_to_done,
   AVG(EXTRACT(EPOCH FROM (t.moved_to_done - t.moved_to_in_progress)) / 3600.0) AS proxy_avg_hours_inprogress_to_done,
@@ -132,16 +134,14 @@ SELECT
 FROM tickets t
 LEFT JOIN clients c                  ON c.id = t.client_id
 LEFT JOIN v_ticket_active_hours ah   ON ah.ticket_id = t.id
-LEFT JOIN change_type_inferences ci  ON ci.ticket_id = t.id
-GROUP BY c.name, COALESCE(t.change_type, ci.inferred_type, 'Untyped');
+GROUP BY c.name, COALESCE(t.change_type, 'Untyped');
 
 CREATE OR REPLACE VIEW v_by_week_type AS
 SELECT
   to_char(t.reported_date, 'IYYY-IW')                   AS iso_week,
-  COALESCE(t.change_type, ci.inferred_type, 'Untyped')  AS change_type,
+  COALESCE(t.change_type, 'Untyped')  AS change_type,
   COUNT(*)                                              AS tickets
 FROM tickets t
-LEFT JOIN change_type_inferences ci ON ci.ticket_id = t.id
 WHERE t.reported_date IS NOT NULL
 GROUP BY 1, 2
 ORDER BY 1, 2;
@@ -149,7 +149,7 @@ ORDER BY 1, 2;
 CREATE OR REPLACE VIEW v_by_fde_type AS
 SELECT
   COALESCE(m.label, 'Unassigned')                       AS fde,
-  COALESCE(t.change_type, ci.inferred_type, 'Untyped')  AS change_type,
+  COALESCE(t.change_type, 'Untyped')  AS change_type,
   COUNT(*)                                              AS tickets,
   AVG(EXTRACT(EPOCH FROM (t.moved_to_done - t.reported_date)) / 86400.0)       AS proxy_avg_days_reported_to_done,
   AVG(EXTRACT(EPOCH FROM (t.moved_to_done - t.moved_to_in_progress)) / 3600.0) AS proxy_avg_hours_inprogress_to_done,
@@ -157,5 +157,4 @@ SELECT
 FROM tickets t
 LEFT JOIN fde_map m                  ON m.notion_user_id = t.pic_user_id
 LEFT JOIN v_ticket_active_hours ah   ON ah.ticket_id = t.id
-LEFT JOIN change_type_inferences ci  ON ci.ticket_id = t.id
-GROUP BY COALESCE(m.label, 'Unassigned'), COALESCE(t.change_type, ci.inferred_type, 'Untyped');
+GROUP BY COALESCE(m.label, 'Unassigned'), COALESCE(t.change_type, 'Untyped');
