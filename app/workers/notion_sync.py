@@ -12,10 +12,15 @@ the blocked-by cause.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
+
+import httpx
 
 from .. import db, notion
 from ..config import settings
+
+log = logging.getLogger(__name__)
 
 # Status lifecycle order. NOTE the review stage is literally "👀 REVIEW" (with the
 # emoji) in the live DB and its copy — matching plain "REVIEW" would break backward
@@ -80,10 +85,19 @@ async def sync_tickets() -> int:
         p = page["properties"]
         ticket_id = page["id"]
         new_status = notion.prop_status(p, "Status")  # handles select OR status type
+        client_id = notion.prop_relation_id(p, "Client Page")
 
         prev = await db.fetchrow("SELECT status FROM tickets WHERE id = $1", ticket_id)
         first_seen = prev is None
         old_status = prev["status"] if prev else None
+
+        # A ticket may reference a client we haven't synced (brand-new client, or the
+        # Master Clients DB not shared with the integration). Stub the row so the FK
+        # can't fail; sync_clients overwrites the stub with the real name when it runs.
+        if client_id:
+            await db.execute(
+                "INSERT INTO clients (id, name) VALUES ($1, '(unknown client)') "
+                "ON CONFLICT (id) DO NOTHING", client_id)
 
         await db.execute(
             """INSERT INTO tickets (id, auto_number, feedback, status, change_type,
@@ -112,7 +126,7 @@ async def sync_tickets() -> int:
             notion.prop_person_id(p, "PIC"),
             notion.prop_person_id(p, "QA PIC"),
             notion.prop_person_id(p, "Reported By"),
-            notion.prop_relation_id(p, "Client Page"),
+            client_id,
             notion.prop_date(p, "Reported Date"),
             notion.prop_date(p, "Moved to In Progress"),
             notion.prop_date(p, "Moved to Review"),
@@ -165,7 +179,16 @@ async def run_once() -> dict:
     # jobs (auto-closer, outbox) keep working regardless.
     if not settings.notion_token:
         return {"skipped": "no NOTION_TOKEN", "at": datetime.now(timezone.utc).isoformat()}
-    clients = await sync_clients()
+    # The clients DB is optional: if it isn't shared with the integration (404),
+    # skip it and sync tickets anyway. Client names then stay as already loaded;
+    # brand-new clients appear as "(unknown client)" stubs until the DB is shared.
+    try:
+        clients = await sync_clients()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code != 404:
+            raise
+        clients = "skipped: Master Clients DB not shared with the integration"
+        log.warning("clients sync skipped (404 — DB not shared); ticket sync continues")
     tickets = await sync_tickets()
     return {"clients": clients, "tickets": tickets, "at": datetime.now(timezone.utc).isoformat()}
 
