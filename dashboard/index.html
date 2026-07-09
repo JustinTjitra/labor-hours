@@ -75,6 +75,8 @@ canvas{max-height:340px}
 <table><thead><tr><th>Age</th><th>Client</th><th>Ticket</th><th>Priority</th><th>Status</th></tr></thead><tbody id="tAge"></tbody></table></div>
 
 <div class="card"><h2>Task-type mix per client (ticket volume)</h2><canvas id="cMix"></canvas></div>
+<div class="card"><h2>Ticket share per client</h2><canvas id="cPie"></canvas>
+<div class="note">All tickets ever reported, top 8 clients by volume; the rest fold into “All others”. Hover for counts. Tickets without a Client Page are excluded.</div></div>
 <div class="card"><h2>Active hours per client <span class="chip c-px">proxy until intervals accrue</span></h2><canvas id="cHours"></canvas></div>
 <div class="card"><h2>Per-FDE/SL task-type mix (%) — allocation, not ranking</h2><canvas id="cFde"></canvas></div>
 <div class="card"><h2>Open backlog by client × status</h2><canvas id="cBack"></canvas></div>
@@ -189,6 +191,22 @@ async function load(){
   const m=stack(client.filter(r=>r.client),r=>r.client,r=>r.change_type,r=>r.tickets);
   draw("cMix",{type:"bar",data:{labels:m.labels,datasets:m.datasets},
     options:{indexAxis:"y",scales:{x:{stacked:true},y:{stacked:true}}}});
+
+  // ticket share per client (donut): top 8 by volume, rest folded into "All others".
+  // Hues assigned in fixed descending order (never cycled); gray is reserved for the
+  // fold bucket. 2px borders in the card surface act as slice spacers.
+  const perClient={};client.forEach(r=>{if(r.client)perClient[r.client]=(perClient[r.client]||0)+(+r.tickets||0);});
+  const ranked=Object.entries(perClient).sort((a,b)=>b[1]-a[1]);
+  const top=ranked.slice(0,8), restN=ranked.slice(8).reduce((s,x)=>s+x[1],0);
+  const pieLabels=[...top.map(x=>x[0]),...(restN?[`All others (${ranked.length-8})`]:[])];
+  const pieData=[...top.map(x=>x[1]),...(restN?[restN]:[])];
+  const pieTotal=pieData.reduce((s,x)=>s+x,0);
+  const pieCols=["#7ba3f5","#4cc38a","#f0b429","#a371f7","#e07b53","#53c9c9","#c953a0","#5d78c9","#8a8a8a"].slice(0,pieLabels.length);
+  if(restN)pieCols[pieLabels.length-1]="#8a8a8a";
+  draw("cPie",{type:"doughnut",data:{labels:pieLabels,datasets:[{data:pieData,
+    backgroundColor:pieCols,borderWidth:2,borderColor:"#181b24"}]},
+    options:{cutout:"55%",plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:11},padding:6}},
+      tooltip:{callbacks:{label:c=>`${c.label}: ${c.raw} tickets (${Math.round(100*c.raw/pieTotal)}%)`}}}}});
 
   // active hours per client (bar) — real intervals; 0 until toggle used
   const byClient={};client.forEach(r=>{if(r.client)byClient[r.client]=(byClient[r.client]||0)+(+r.active_hours||0);});
