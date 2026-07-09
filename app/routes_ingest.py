@@ -6,6 +6,7 @@ import re
 import secrets as _secrets
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from . import db, slack_client
 from .config import settings
@@ -120,7 +121,11 @@ async def notion_webhook(request: Request):
     # correct handler is to run an incremental sync, which upserts + logs transitions.
     # (A tighter handler could upsert just payload's page — kept simple for the MVP.)
     _ = payload
-    result = await notion_sync.run_once()
+    try:
+        result = await notion_sync.run_once()
+    except Exception as e:  # surface the cause (e.g. Notion 401/404) instead of a blank 500
+        return JSONResponse(status_code=502,
+                            content={"sync_error": f"{type(e).__name__}: {str(e)[:300]}"})
     return {"synced": result}
 
 
