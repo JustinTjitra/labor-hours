@@ -28,6 +28,11 @@ td{padding:6px 8px;border-bottom:1px solid #23283573;vertical-align:top}
 .c-ok{background:#11341f;color:#4cc38a}.c-px{background:#3a2b10;color:#f0b429}.c-pt{background:#1c2a4a;color:#7ba3f5}.c-bl{background:#3a1512;color:#e5534b}
 canvas{max-height:340px}
 .active-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.donutgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.donutcell{background:#0f1117;border:1px solid #23283570;border-radius:10px;padding:12px}
+.dn-title{font-size:14px;font-weight:600}.dn-sub{color:var(--mut);font-size:11px;margin-bottom:6px}
+.donutcell canvas{max-height:230px}
+.tag{display:inline-block;background:#1c2333;color:#7ba3f5;border-radius:6px;padding:1px 7px;font-size:12px}
 .aw{background:#0f1117;border:1px solid #23283570;border-left:3px solid #4cc38a;border-radius:10px;padding:12px}
 .aw .who{font-weight:700;font-size:14px;display:flex;align-items:center;gap:7px}
 .aw .task{font-size:13px;margin:7px 0 6px;line-height:1.35}
@@ -77,6 +82,21 @@ canvas{max-height:340px}
 <div class="card full"><h2>QA-failed / recurrence signals</h2>
 <table><thead><tr><th>Client</th><th>Signal</th><th>Priority</th></tr></thead><tbody id="tRec"></tbody></table></div>
 
+<div class="card full"><h2>Cost-to-serve index — effort-weighted, not raw ticket count <span class="chip c-pt">Capacity &amp; Recurrence</span></h2>
+<canvas id="cCost2"></canvas>
+<div class="note">Each ticket is one unit of work, +50% if it sits in a recurring problem area, +50% if QA-failed. Priority is excluded on purpose — urgency ≠ effort. Full detail on the <a href="/dashboard/capacity_recurrence.html" style="color:#7ba3f5">Capacity &amp; Recurrence page →</a></div></div>
+
+<div class="card"><h2>Key-person risk — top FDE's share per client</h2><canvas id="cRisk2"></canvas>
+<div class="note">Red = one person carries 100% of the client; if they're out, nobody has context.</div></div>
+<div class="card"><h2>Recurrence — % of tickets in recurring problem areas</h2><canvas id="cRec2"></canvas>
+<div class="note">Concept-based: same underlying issue re-ticketed even when worded differently.</div></div>
+
+<div class="card full"><h2>Where each FDE's week goes — client allocation (mix, not ranking)</h2>
+<div class="donutgrid" id="donuts2"></div></div>
+
+<div class="card full"><h2>Recurring problem groups — where unfixed work piles up</h2>
+<table><thead><tr><th>Count</th><th>Client</th><th>Problem area</th><th>Examples</th></tr></thead><tbody id="tGroups"></tbody></table></div>
+
 <div class="card full"><h2>Metric catalog — 22 analytics and what each needs</h2>
 <table><thead><tr><th>Scope</th><th>Metric</th><th>Status</th><th>Needs</th></tr></thead><tbody id="tCat"></tbody></table></div>
 </div>
@@ -100,11 +120,12 @@ function stack(rows,keyF,typeF,valF,horizontal){
 }
 
 async function load(){
-  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov]=await Promise.all([
+  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap]=await Promise.all([
     api("data-quality"),api("by-week-type"),api("by-client-type"),api("by-fde-type"),
     api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
     api("throughput"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
-    api("priority-age"),api("arrival-dow"),api("change-type-coverage")]);
+    api("priority-age"),api("arrival-dow"),api("change-type-coverage"),
+    api("capacity-recurrence")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -195,6 +216,50 @@ async function load(){
   const sig=[...qaf.map(r=>[r.client,r.feedback,r.priority||""]),
              ...rec.map(r=>[r.client,r.detail,r.kind||""])];
   document.getElementById("tRec").innerHTML=sig.map(r=>`<tr><td><b>${r[0]??""}</b></td><td>${r[1]??""}</td><td>${r[2]}</td></tr>`).join("")||`<tr><td colspan=3 class=note>none</td></tr>`;
+
+  // --- Capacity & Recurrence (Kennard's live compute, same payload as his page) ---
+  const KC={ok:"#4cc38a",warn:"#f0b429",bad:"#e5534b",blue:"#7ba3f5",purp:"#a371f7"};
+  const kpal=[KC.blue,KC.ok,KC.warn,KC.purp,"#e07b53","#53c9c9","#c953a0","#8a8a8a","#5d78c9"];
+
+  const cts=cap.cost_to_serve.filter(c=>c.tickets>=5);
+  draw("cCost2",{type:"bar",data:{labels:cts.map(c=>c.client),datasets:[{data:cts.map(c=>c.effort),
+    backgroundColor:cts.map(c=>c.eff_per_ticket>=1.5?KC.bad:c.eff_per_ticket>=1.25?KC.warn:KC.blue),borderRadius:4}]},
+    options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>
+      `${c.raw} effort pts · ${cts[c.dataIndex].tickets} tickets · ${cts[c.dataIndex].eff_per_ticket}/ticket`}}},
+      scales:{x:{title:{display:true,text:"effort points (cost to serve)"}}}}});
+
+  const risk=cap.by_client.filter(c=>c.tickets>=5);
+  draw("cRisk2",{type:"bar",data:{labels:risk.map(c=>c.client),datasets:[{data:risk.map(c=>Math.round(c.top_share*100)),
+    backgroundColor:risk.map(c=>c.single_person?KC.bad:c.top_share>=0.8?KC.warn:KC.blue),borderRadius:4}]},
+    options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>
+      `${c.raw}% carried by ${risk[c.dataIndex].top_fde} (${risk[c.dataIndex].fdes} FDE${risk[c.dataIndex].fdes>1?"s":""})`}}},
+      scales:{x:{max:100,title:{display:true,text:"% by top FDE"}}}}});
+
+  const recr=cap.recurrence.filter(r=>r.tickets>=5);
+  draw("cRec2",{type:"bar",data:{labels:recr.map(r=>r.client),datasets:[{data:recr.map(r=>Math.round(r.rate*100)),
+    backgroundColor:recr.map(r=>r.rate>=0.4?KC.bad:r.rate>=0.2?KC.warn:KC.blue),borderRadius:4}]},
+    options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>
+      `${c.raw}% in recurring areas · ${recr[c.dataIndex].in_recur}/${recr[c.dataIndex].tickets} tickets · ${recr[c.dataIndex].qa_failed} QA-failed`}}},
+      scales:{x:{title:{display:true,text:"% of tickets in a recurring problem area"}}}}});
+
+  // FDE allocation donuts (rebuilt each refresh; instances tracked for destroy)
+  window._donuts2=(window._donuts2||[]);window._donuts2.forEach(c=>c.destroy());window._donuts2=[];
+  const dg2=document.getElementById("donuts2");dg2.innerHTML="";
+  cap.by_fde.forEach(f=>{
+    const cell=document.createElement("div");cell.className="donutcell";
+    cell.innerHTML=`<div class="dn-title">${f.fde}</div><div class="dn-sub">${f.tickets} tickets · ${f.clients} clients · HHI ${f.hhi}</div><canvas></canvas>`;
+    dg2.appendChild(cell);
+    const cl=Object.keys(f.breakdown),vals=Object.values(f.breakdown);
+    window._donuts2.push(new Chart(cell.querySelector("canvas"),{type:"doughnut",
+      data:{labels:cl,datasets:[{data:vals,backgroundColor:cl.map((_,i)=>kpal[i%kpal.length]),borderWidth:2,borderColor:"#0f1117"}]},
+      options:{cutout:"55%",plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10},padding:6}},
+        tooltip:{callbacks:{label:c=>`${c.label}: ${c.raw} (${Math.round(100*c.raw/f.tickets)}%)`}}}}}));
+  });
+
+  document.getElementById("tGroups").innerHTML=cap.groups.map(g=>
+    `<tr><td><span class="chip ${g.size>=8?"c-bl":g.size>=4?"c-px":"c-ok"}">x${g.size}</span></td><td>${g.client}</td>`+
+    `<td><span class="tag">${g.concept}</span></td><td style="color:#8b93a7">${g.examples.map(e=>e.replace(/</g,"&lt;")).join(" · ")}</td></tr>`).join("")
+    ||`<tr><td colspan=4 class=note>No recurring problem groups.</td></tr>`;
 
   // metric catalog
   const chip=s=>s.startsWith("COMPUTED")?"c-ok":s.startsWith("PROXY")?"c-px":(s.startsWith("PARTIAL")||s.startsWith("READY"))?"c-pt":"c-bl";
