@@ -54,7 +54,20 @@ canvas{max-height:340px}
 
 <div class="grid">
 <div class="card full"><h2>Weekly ticket volume by task type</h2><canvas id="cWeek"></canvas>
-<div class="note">The before/after timeline feature ship-dates annotate (once the Features table has rows).</div></div>
+<div class="note">The before/after timeline feature ship-dates annotate (once the Features table has rows). <span id="covNote"></span></div></div>
+
+<div class="card full"><h2>Flow — tickets opened vs closed per week</h2><canvas id="cFlow"></canvas>
+<div class="note">Gray bars are the weekly net (opened − closed): above zero the backlog grows, below it shrinks. Closes need a "Moved to Done" date — batches closed without one don't register here.</div></div>
+
+<div class="card"><h2>Backlog aging by client <span class="chip c-px">calendar age</span></h2><canvas id="cAging"></canvas>
+<div class="note">Open tickets by time since reported. Red = sitting &gt;30 days.</div></div>
+<div class="card"><h2>Cycle time per client — median days <span class="chip c-px">calendar-span proxy</span></h2><canvas id="cCycle"></canvas>
+<div class="note">Reported→Done wall-clock, closed tickets with both dates (≥3 per client). Hover for p90 and sample size. Medians, not averages — long tails dominate.</div></div>
+<div class="card"><h2>Cycle time by priority <span class="chip c-px">proxy</span></h2><canvas id="cCyclePr"></canvas></div>
+<div class="card"><h2>Ticket arrivals by day of week</h2><canvas id="cDow"></canvas></div>
+
+<div class="card full"><h2>Oldest open CRITICAL / HIGH tickets</h2>
+<table><thead><tr><th>Age</th><th>Client</th><th>Ticket</th><th>Priority</th><th>Status</th></tr></thead><tbody id="tAge"></tbody></table></div>
 
 <div class="card"><h2>Task-type mix per client (ticket volume)</h2><canvas id="cMix"></canvas></div>
 <div class="card"><h2>Active hours per client <span class="chip c-px">proxy until intervals accrue</span></h2><canvas id="cHours"></canvas></div>
@@ -87,9 +100,11 @@ function stack(rows,keyF,typeF,valF,horizontal){
 }
 
 async function load(){
-  const [dq,week,client,fde,back,qaf,rec,cat]=await Promise.all([
+  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov]=await Promise.all([
     api("data-quality"),api("by-week-type"),api("by-client-type"),api("by-fde-type"),
-    api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog")]);
+    api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
+    api("throughput"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
+    api("priority-age"),api("arrival-dow"),api("change-type-coverage")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -102,6 +117,52 @@ async function load(){
   const w=stack(week,r=>r.iso_week,r=>r.change_type,r=>r.tickets);
   draw("cWeek",{type:"bar",data:{labels:w.labels,datasets:w.datasets},
     options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
+
+  // change-type coverage note (classifier fills previously-Untyped rows)
+  if(cov&&cov[0])document.getElementById("covNote").textContent=
+    `Change types: ${cov[0].pct_typed}% typed (${cov[0].human_typed} human + ${cov[0].inferred} inferred, ${cov[0].still_untyped} untyped).`;
+
+  // flow: opened vs closed lines + net bars
+  draw("cFlow",{data:{labels:flow.map(r=>r.iso_week),datasets:[
+    {type:"line",label:"Opened",data:flow.map(r=>+r.opened),borderColor:"#7ba3f5",backgroundColor:"#7ba3f5",tension:.25,pointRadius:2},
+    {type:"line",label:"Closed",data:flow.map(r=>+r.closed),borderColor:C.fix,backgroundColor:C.fix,tension:.25,pointRadius:2},
+    {type:"bar",label:"Net (backlog growth)",data:flow.map(r=>+r.net),backgroundColor:flow.map(r=>+r.net>0?"#e5534b66":"#4cc38a44")}]},
+    options:{scales:{y:{title:{display:true,text:"tickets / week"}}}}});
+
+  // backlog aging (stacked horizontal, top clients by open tickets)
+  const ag=aging.slice(0,14);
+  draw("cAging",{type:"bar",data:{labels:ag.map(r=>r.client),datasets:[
+    {label:"< 7d",data:ag.map(r=>+r.lt_7d),backgroundColor:"#7ba3f5"},
+    {label:"7–30d",data:ag.map(r=>+r.d7_30),backgroundColor:C.prd},
+    {label:"> 30d",data:ag.map(r=>+r.gt_30d),backgroundColor:"#e5534b"}]},
+    options:{indexAxis:"y",scales:{x:{stacked:true,title:{display:true,text:"open tickets"}},y:{stacked:true}},
+      plugins:{tooltip:{callbacks:{footer:i=>`oldest: ${ag[i[0].dataIndex].oldest_days}d`}}}}});
+
+  // cycle time per client (median, tooltip p90 + n)
+  const cy=cyc.slice(0,14);
+  draw("cCycle",{type:"bar",data:{labels:cy.map(r=>r.client),datasets:[{label:"median days",
+    data:cy.map(r=>+r.median_days),backgroundColor:cy.map(r=>+r.median_days>=14?"#e5534b":+r.median_days>=7?C.prd:"#7ba3f5")}]},
+    options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{
+      label:c=>`median ${c.raw}d · p90 ${cy[c.dataIndex].p90_days}d · n=${cy[c.dataIndex].done_tickets}`}}},
+      scales:{x:{title:{display:true,text:"days reported → done (median)"}}}}});
+
+  // cycle time by priority
+  draw("cCyclePr",{type:"bar",data:{labels:cycpr.map(r=>r.priority),datasets:[{label:"median days",
+    data:cycpr.map(r=>+r.median_days),backgroundColor:"#a371f7aa"}]},
+    options:{plugins:{legend:{display:false},tooltip:{callbacks:{
+      label:c=>`median ${c.raw}d · p90 ${cycpr[c.dataIndex].p90_days}d · n=${cycpr[c.dataIndex].done_tickets}`}}},
+      scales:{y:{title:{display:true,text:"days (median)"}}}}});
+
+  // arrivals by day of week
+  draw("cDow",{type:"bar",data:{labels:dow.map(r=>r.dow),datasets:[{label:"tickets",
+    data:dow.map(r=>+r.tickets),backgroundColor:"#5b8def99"}]},
+    options:{plugins:{legend:{display:false}},scales:{y:{title:{display:true,text:"tickets reported"}}}}});
+
+  // oldest open CRITICAL/HIGH
+  document.getElementById("tAge").innerHTML=prage.slice(0,12).map(r=>
+    `<tr><td><b>${r.age_days}d</b></td><td>${r.client??"—"}</td><td>${(r.feedback??"").replace(/</g,"&lt;")}</td>`+
+    `<td><span class="chip ${r.priority==="CRITICAL"?"c-bl":"c-px"}">${r.priority}</span></td><td>${r.status??""}</td></tr>`).join("")
+    ||`<tr><td colspan=5 class=note>No open CRITICAL/HIGH tickets 🎉</td></tr>`;
 
   // client mix (horizontal stacked)
   const m=stack(client.filter(r=>r.client),r=>r.client,r=>r.change_type,r=>r.tickets);

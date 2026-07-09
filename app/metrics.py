@@ -24,6 +24,15 @@ _VIEWS = {
     "clients": "v_clients",
     "data-quality": "v_data_quality",
     "catalog": "metric_catalog",
+    # flow analytics (db/06) — calendar-span proxies, counts only
+    "throughput": "v_flow_throughput_weekly",
+    "backlog-aging": "v_flow_backlog_aging",
+    "cycle-time": "v_flow_cycle_time_client",
+    "cycle-time-priority": "v_flow_cycle_time_priority",
+    "priority-age": "v_flow_priority_age",
+    "arrival-dow": "v_flow_arrival_dow",
+    # change-type classifier coverage (db/04, Kennard)
+    "change-type-coverage": "v_change_type_coverage",
 }
 
 
