@@ -52,22 +52,23 @@ services:
         value: 35281b4e-061b-81c3-af8a-000bf14667ba   # REAL master Client Feedback DB
 
   # --- Worker: 2-min Notion sync + auto-closers + outbox flush ------------------
-  # Render background workers are a PAID feature (not free tier). Uncomment once you
-  # are on a paid plan AND have set NOTION_TOKEN above — then the dashboard follows
-  # Notion edits automatically. The web service alone already handles button presses.
-  #
-  # - type: worker
-  #   name: labor-hours-worker
-  #   runtime: python
-  #   plan: starter
-  #   buildCommand: pip install -r requirements.txt
-  #   startCommand: python -m app.worker
-  #   envVars:
-  #     - key: DATABASE_URL
-  #       fromDatabase: { name: labor-hours-db, property: connectionString }
-  #     - key: NOTION_TOKEN
-  #       sync: false
-  #     - key: NOTION_WRITE_ENABLED
-  #       value: "false"
-  #     - key: NOTION_TICKET_DB_ID
-  #       value: 35281b4e-061b-81c3-af8a-000bf14667ba   # REAL master Client Feedback DB
+  # ENABLED. Render background workers are a PAID feature — this service needs a paid
+  # plan (Starter, ~$7/mo). It polls the master DB every 2 min (incremental via
+  # last_edited_time) so the dashboard follows Notion edits automatically, and it
+  # auto-closes stale/idle intervals. NOTION_TOKEN must be set (same value as the web
+  # service). NOTION_WRITE_ENABLED stays false — the worker still never writes to Notion.
+  - type: worker
+    name: labor-hours-worker
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.worker
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: labor-hours-db, property: connectionString }
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_WRITE_ENABLED
+        value: "false"
+      - key: NOTION_TICKET_DB_ID
+        value: 35281b4e-061b-81c3-af8a-000bf14667ba   # REAL master Client Feedback DB
