@@ -45,7 +45,7 @@ canvas{max-height:340px}
 </head>
 <body>
 <h1>FDE/SL Labor Analytics — live</h1>
-<div class="sub">Reads the Postgres view layer via <code>/metrics/*</code> (60s refresh). Hours &amp; volume only — no dollars, no per-person rankings. · <a href="/dashboard/capacity_recurrence.html" style="color:#7ba3f5">Capacity &amp; Recurrence →</a></div>
+<div class="sub">Reads the Postgres view layer via <code>/metrics/*</code> (60s refresh). Hours &amp; volume only — no dollars, no per-person rankings.</div>
 
 <div class="live"><span class="dot"></span><span id="working">Connecting to “who’s working now”…</span></div>
 
@@ -84,7 +84,7 @@ canvas{max-height:340px}
 
 <div class="card full"><h2>Cost-to-serve index — effort-weighted, not raw ticket count <span class="chip c-pt">Capacity &amp; Recurrence</span></h2>
 <canvas id="cCost2"></canvas>
-<div class="note">Each ticket is one unit of work, +50% if it sits in a recurring problem area, +50% if QA-failed. Priority is excluded on purpose — urgency ≠ effort. Full detail on the <a href="/dashboard/capacity_recurrence.html" style="color:#7ba3f5">Capacity &amp; Recurrence page →</a></div></div>
+<div class="note">Each ticket is one unit of work, +50% if it sits in a recurring problem area, +50% if QA-failed. Priority is excluded on purpose — urgency ≠ effort. Tickets without a Client Page in Notion (15 of 630 today) aren't attributable to a client and are excluded from this section.</div></div>
 
 <div class="card"><h2>Key-person risk — top FDE's share per client</h2><canvas id="cRisk2"></canvas>
 <div class="note">Red = one person carries 100% of the client; if they're out, nobody has context.</div></div>
