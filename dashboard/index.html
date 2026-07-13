@@ -88,8 +88,10 @@ canvas{max-height:340px}
 <div class="card"><h2>Time to Copilot / Autopilot per client</h2><canvas id="cTTA"></canvas>
 <div class="note">Days from scoping to each phase gate, clients with recorded dates. The cohort baseline for feature metric #6.</div></div>
 
-<div class="card full"><h2>SL capacity — hot clients right now <span class="chip c-px">triage span is a calendar proxy</span></h2>
-<table><thead><tr><th>Client</th><th>Tickets/week (4-wk avg)</th><th>Open backlog</th><th>Median triage days</th><th>Triage samples</th></tr></thead><tbody id="tSL"></tbody></table>
+<div class="card full"><h2>SL capacity <span class="chip c-px">triage span is a calendar proxy</span></h2>
+<table><thead><tr><th>Service Lead</th><th>Clients (hot)</th><th>Tickets/day into book (28d)</th><th>Open backlog</th><th>Median triage days</th></tr></thead><tbody id="tSLsl"></tbody></table>
+<div class="note" style="margin-bottom:12px">Per-SL load: inflow across every client the SL owns. Hot = client averaging ≥2 tickets/week. The catalog's “× triage-and-spec time” multiplier lands once intervals capture real SL timing — until then the components are shown separately. Unmapped SLs are guest ids awaiting names in fde_map.</div>
+<table><thead><tr><th>Client (hot right now)</th><th>Tickets/week (4-wk avg)</th><th>Open backlog</th><th>Median triage days</th><th>Triage samples</th></tr></thead><tbody id="tSL"></tbody></table>
 <div class="note">Triage = reported → moved-to-In-Progress; only tickets carrying that stamp count (see samples column).</div></div>
 
 <div class="card full"><h2>QA-failed / recurrence signals</h2>
@@ -137,13 +139,13 @@ function stack(rows,keyF,typeF,valF,horizontal){
 }
 
 async function load(){
-  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap]=await Promise.all([
+  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap,slsl]=await Promise.all([
     api("data-quality"),api("by-week-type"),api("by-client-type"),api("by-fde-type"),
     api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
     api("throughput"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
     api("priority-age"),api("arrival-dow"),api("change-type-coverage"),
     api("capacity-recurrence"),api("fde-stage-mix"),api("time-to-autopilot"),
-    api("volume-by-phase"),api("sl-capacity")]);
+    api("volume-by-phase"),api("sl-capacity"),api("sl-capacity-by-sl")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -264,6 +266,13 @@ async function load(){
     {label:"days scoping → Copilot",data:tta.map(r=>r.days_scoping_to_copilot),backgroundColor:"#f0b429aa"},
     {label:"days scoping → Autopilot",data:tta.map(r=>r.days_scoping_to_autopilot),backgroundColor:"#a371f7aa"}]},
     options:{indexAxis:"y",scales:{x:{title:{display:true,text:"days from scoping"}}}}});
+
+  // SL capacity — per Service Lead rollup (book of clients + inflow + triage)
+  document.getElementById("tSLsl").innerHTML=slsl.map(r=>
+    `<tr><td><b>${r.sl}</b></td><td>${r.clients_covered} (${r.hot_clients} hot)</td>`+
+    `<td>${r.tickets_per_day}</td><td>${r.open_backlog}</td>`+
+    `<td>${r.median_triage_days??"—"}<span class=note> (n=${r.triage_samples??0})</span></td></tr>`).join("")
+    ||`<tr><td colspan=5 class=note>No SL assignments in the clients DB.</td></tr>`;
 
   // SL capacity table (hot clients by recent inflow)
   document.getElementById("tSL").innerHTML=slcap.slice(0,12).map(r=>

@@ -52,8 +52,53 @@ WHERE t.reported_date IS NOT NULL
 GROUP BY 1, 2
 ORDER BY 1, 2;
 
--- SL capacity proxy: which clients are hot right now and how fast tickets get
--- picked up. tickets_per_week = 28-day inflow / 4; median_triage_days =
+-- SL capacity, per Service Lead: each SL's book of clients and the triage load
+-- flowing into it. The catalog item is "tickets/day per hot client x triage-and-
+-- spec time" — inflow and triage span are real; the spec-time multiplier awaits
+-- actual timing data (intervals on SL work), so this surfaces the components
+-- rather than faking the product. hot_clients = clients averaging >= 2/week
+-- over the last 28 days. SLs come from clients.sl_user_id (Master Clients DB);
+-- unmapped guest ids display as a short-id label until named in fde_map.
+CREATE OR REPLACE VIEW v_sl_capacity_by_sl AS
+WITH per_client AS (
+  SELECT client_id,
+         COUNT(*) FILTER (WHERE reported_date >= now() - interval '28 days') AS n28,
+         COUNT(*) FILTER (WHERE status IS DISTINCT FROM 'Done')              AS open_n
+  FROM tickets
+  WHERE client_id IS NOT NULL
+  GROUP BY client_id
+),
+triage AS (
+  SELECT c.sl_user_id,
+         COUNT(*) AS triage_samples,
+         ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY
+             EXTRACT(EPOCH FROM (t.moved_to_in_progress - t.reported_date)) / 86400.0
+           )::numeric, 1) AS median_triage_days
+  FROM tickets t
+  JOIN clients c ON c.id = t.client_id
+  WHERE c.sl_user_id IS NOT NULL
+    AND t.moved_to_in_progress IS NOT NULL
+    AND t.moved_to_in_progress >= t.reported_date
+  GROUP BY c.sl_user_id
+)
+SELECT
+  COALESCE(m.label, 'SL ' || left(c.sl_user_id, 8) || '…') AS sl,
+  COUNT(c.id)                                              AS clients_covered,
+  COUNT(c.id) FILTER (WHERE COALESCE(pc.n28, 0) >= 8)      AS hot_clients,
+  ROUND(SUM(COALESCE(pc.n28, 0)) / 28.0, 1)                AS tickets_per_day,
+  SUM(COALESCE(pc.open_n, 0))                              AS open_backlog,
+  MAX(tr.median_triage_days)                               AS median_triage_days,
+  MAX(tr.triage_samples)                                   AS triage_samples
+FROM clients c
+LEFT JOIN fde_map m   ON m.notion_user_id = c.sl_user_id
+LEFT JOIN per_client pc ON pc.client_id = c.id
+LEFT JOIN triage tr   ON tr.sl_user_id = c.sl_user_id
+WHERE c.sl_user_id IS NOT NULL
+GROUP BY 1
+ORDER BY tickets_per_day DESC;
+
+-- Hot clients right now (client-level companion): how fast tickets get picked
+-- up. tickets_per_week = 28-day inflow / 4; median_triage_days =
 -- reported -> moved-to-In-Progress calendar span (only ~18% of tickets carry
 -- the stamp — treat as indicative, the column says how many).
 CREATE OR REPLACE VIEW v_sl_capacity AS

@@ -38,6 +38,7 @@ _VIEWS = {
     "time-to-autopilot": "v_time_to_autopilot",
     "volume-by-phase": "v_volume_by_phase_week",
     "sl-capacity": "v_sl_capacity",
+    "sl-capacity-by-sl": "v_sl_capacity_by_sl",
 }
 
 
