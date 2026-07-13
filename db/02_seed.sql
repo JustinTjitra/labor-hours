@@ -34,29 +34,41 @@ INSERT INTO change_types (name, sort_order) VALUES
   ('Other', 90)
 ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order;
 
--- The 22-metric catalog — authoritative spec for which views to build and what
--- each still needs. Mirrors metric_catalog in labor_analytics.db verbatim.
+-- The metric catalog — the analytics spec + live coverage. Statuses refreshed
+-- 2026-07-10 to reflect what has shipped; the block below the divider is the
+-- analytics added since the original 22-metric spec (all live on the dashboard).
 TRUNCATE metric_catalog;
 INSERT INTO metric_catalog (scope, metric, status, where_in_db, needs) VALUES
- ('Dashboard','Active hours by task category (org-wide & per client)','PROXY','v_by_client_type','Phase 0 interval logging; expanded taxonomy (41% untyped today)'),
- ('Dashboard','Active vs queue/wait hours by stage, split by blocked-by cause','PARTIAL PROXY','v_by_client_type.proxy_avg_days_queue (queue proxy only, 17.7% coverage)','Blocked-by field + blocked-episode timestamps'),
- ('Dashboard','Per-FDE/SL task-type and stage mix','COMPUTED (mix by type)','v_by_fde_type','Expanded taxonomy for real mix; stage mix needs full transition timestamps'),
- ('Dashboard','SL capacity view (tickets/day per hot client x triage-and-spec time)','PARTIAL','v_by_client_type + v_backlog_client_status (volume side only)','Triage/spec time needs interval logging on SL work; Capacity Planning join'),
- ('Dashboard','Before/after weekly timeline with ship dates','PARTIAL','v_by_week_type + features (timeline exists)','Feature ship-date source of truth (features table) - populate at ship time'),
- ('Client','Active hours per ticket, per client, trended','PROXY','v_by_client_type','Phase 0 intervals'),
- ('Client','Task-type mix per client','COMPUTED (2 types + untyped)','v_by_client_type','Expanded taxonomy - currently only AI Fix / PRD Change'),
- ('Client','Queue/wait vs active ratio per client by blocked-by cause','PROXY (queue only)','v_by_client_type.proxy_avg_days_queue','Blocked-by field'),
- ('Client','Reopen/recurrence hours per client','PARTIAL (counts, not hours)','v_qa_failed_open + v_recurrence','Backward-transition logging + reopened-from relation + intervals'),
- ('Client','Hours-per-phase decay curve','BLOCKED (volume-per-phase possible)','v_clients (phase dates)','Phase-tag hygiene on tickets (most Phase fields empty) + intervals'),
+ ('Dashboard','Active hours by task category (org-wide & per client)','PROXY','v_by_client_type.active_hours','Interval logging (button adoption) - column is live and fills as intervals accrue'),
+ ('Dashboard','Active vs queue/wait hours by stage, split by blocked-by cause','PARTIAL PROXY','v_by_client_type queue proxy','Blocked-by cause (Slack prompt) + intervals'),
+ ('Dashboard','Per-FDE/SL task-type and stage mix','COMPUTED (type + stage)','v_by_fde_type + v_fde_stage_mix','Hours-weighted mix needs intervals'),
+ ('Dashboard','SL capacity view (tickets/day per hot client x triage-and-spec time)','PARTIAL (inflow + triage live)','v_sl_capacity_by_sl + v_sl_capacity','Spec-time multiplier needs interval logging on SL work'),
+ ('Dashboard','Before/after weekly timeline with ship dates','PARTIAL (timeline live, real dates)','v_by_week_type + features','Populate the features table at ship time'),
+ ('Client','Active hours per ticket, per client, trended','PROXY','v_by_client_type','Interval logging (button adoption)'),
+ ('Client','Task-type mix per client','COMPUTED (human types)','v_by_client_type','Inferred buckets kept backend-only by product decision'),
+ ('Client','Queue/wait vs active ratio per client by blocked-by cause','PROXY (queue only)','v_by_client_type queue proxy','Blocked-by cause + intervals'),
+ ('Client','Reopen/recurrence hours per client','PARTIAL (counts live)','v_recurrence + capacity-recurrence','Hours need intervals (backward-transition logging now live)'),
+ ('Client','Hours-per-phase decay curve','PARTIAL (volume proxy live)','v_volume_by_phase_week','Hours need intervals; phase history not stored (current-phase caveat)'),
  ('Client','Active hours per 1,000 conversations','BLOCKED','conversations_daily','Conversation volume export from Portal/Eden Flow'),
- ('Client','Unticketed-work share, sampled','BLOCKED','-','Micro View sampled recording'),
- ('Client','Capacity concentration (share of FDE/SL week per client)','PARTIAL','v_by_fde_type x v_by_client_type (ticket share only)','Capacity Planning join + intervals'),
- ('Client','Time-to-Autopilot vs cohort','COMPUTED (sparse)','v_clients.days_scoping_to_autopilot (only 2 clients have full dates)','Phase-date hygiene in Master Clients DB'),
- ('Feature','Before/after active hours in targeted category','BLOCKED','v_by_week_type is the scaffold','Ship dates + intervals + taxonomy'),
+ ('Client','Unticketed-work share, sampled','BLOCKED','-','Micro View sampled recording calibration'),
+ ('Client','Capacity concentration (share of FDE/SL week per client)','COMPUTED (ticket share)','capacity-recurrence (HHI, key-person risk, donuts)','Hours-weighted version needs intervals'),
+ ('Client','Time-to-Autopilot vs cohort','COMPUTED','v_time_to_autopilot','More clients with actual phase dates in Master Clients DB'),
+ ('Feature','Before/after active hours in targeted category','BLOCKED','v_by_week_type scaffold','Ship dates + intervals'),
  ('Feature','Ticket-volume delta pre/post (fallback)','READY once ship dates exist','v_by_week_type','Feature ship-date table only - usable today'),
- ('Feature','Reopen/recurrence rate before/after','PARTIAL','v_qa_failed_open (current snapshot)','Backward-transition logging + ship dates'),
+ ('Feature','Reopen/recurrence rate before/after','PARTIAL','v_recurrence','Ship dates (backward-transition logging now live)'),
  ('Feature','Deploy-wait time before/after','BLOCKED','-','Deploy-wait sub-status or interval type'),
  ('Feature','Tickets per 1,000 conversations before/after','BLOCKED','-','Conversation volume + ship dates'),
- ('Feature','Time-to-Autopilot cohort comparison','COMPUTED (sparse)','v_clients','Phase-date hygiene; more clients with actual dates'),
+ ('Feature','Time-to-Autopilot cohort comparison','COMPUTED','v_time_to_autopilot','More clients with actual phase dates'),
  ('Feature','Cross-agent fix propagation rate','BLOCKED','-','Agent Fixer link between triaged ticket and propagated fixes'),
- ('Feature','False-positive/rework rate for QA features','BLOCKED','-','Product/tool tag on tickets (tag Watchtower-caused cleanup)');
+ ('Feature','False-positive/rework rate for QA features','BLOCKED','-','Product/tool tag on tickets (tag Watchtower-caused cleanup)'),
+ -- ---- Added since the original spec (live on the dashboard) --------------------
+ ('Flow','Ticket flow - opened vs closed per week (net backlog growth)','COMPUTED','v_flow_throughput_weekly','-'),
+ ('Flow','Backlog aging by client (age buckets)','COMPUTED','v_flow_backlog_aging','-'),
+ ('Flow','Cycle time reported->done, per client & priority','PROXY (calendar span)','v_flow_cycle_time_client / v_flow_cycle_time_priority','Active-time version needs intervals'),
+ ('Flow','Oldest open CRITICAL/HIGH tickets','COMPUTED','v_flow_priority_age','-'),
+ ('Flow','Ticket arrivals by day of week','COMPUTED','v_flow_arrival_dow','-'),
+ ('Dashboard','Ticket share per client','COMPUTED','v_by_client_type (client-side aggregate)','-'),
+ ('Dashboard','Latest tickets feed (10 most recent)','COMPUTED','v_recent_tickets','-'),
+ ('Dashboard','Who is working now - live intervals + per-second timers','COMPUTED','v_who_working_now (SSE)','Button adoption for real coverage'),
+ ('Dashboard','Cost-to-serve index (effort-weighted per client)','COMPUTED','capacity-recurrence endpoint','Real per-task effort weights (FDE interview) sharpen it'),
+ ('Dashboard','Change-type classifier coverage','COMPUTED','v_change_type_coverage','-');
