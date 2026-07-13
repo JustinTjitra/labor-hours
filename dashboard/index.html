@@ -44,9 +44,12 @@ canvas{max-height:340px}
 .aw-empty{color:var(--mut);font-size:13px;padding:6px 2px}
 .filterbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--card);border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--mut)}
 .filterbar input[type=date]{background:#0f1117;border:1px solid #2a2f3e;color:var(--txt);border-radius:6px;padding:4px 8px;font-size:13px;color-scheme:dark}
-.fb-btn{background:#0f1117;border:1px solid #2a2f3e;color:var(--txt);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
-.fb-btn:hover{border-color:#4a5268}.fb-btn.on{background:#1c2a4a;border-color:#4a6ab0;color:#cfe0ff}
+.fb-btn,.fb-gbtn{background:#0f1117;border:1px solid #2a2f3e;color:var(--txt);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.fb-btn:hover,.fb-gbtn:hover{border-color:#4a5268}
+.fb-btn.on{background:#1c2a4a;border-color:#4a6ab0;color:#cfe0ff}
+.fb-gbtn.on{background:#11341f;border-color:#1f6e3f;color:#8de0a8}
 .fb-label{font-weight:600;color:var(--txt)}
+.gsfx{color:var(--mut);font-size:12px;font-weight:400}
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -69,20 +72,25 @@ canvas{max-height:340px}
 <div class="kpis" id="kpis"></div>
 
 <div class="filterbar">
-  <span class="fb-label">Weekly charts:</span>
+  <span class="fb-label">Time series:</span>
   <span>from</span> <input type="date" id="dFrom"> <span>to</span> <input type="date" id="dTo">
+  <button class="fb-btn" data-days="14">2w</button>
   <button class="fb-btn" data-days="28">4w</button>
-  <button class="fb-btn" data-days="56">8w</button>
   <button class="fb-btn" data-days="84">12w</button>
   <button class="fb-btn on" id="dAll">All time</button>
+  <span class="fb-label" style="margin-left:12px">bucket:</span>
+  <button class="fb-gbtn on" data-grain="auto">Auto</button>
+  <button class="fb-gbtn" data-grain="day">Day</button>
+  <button class="fb-gbtn" data-grain="week">Week</button>
+  <button class="fb-gbtn" data-grain="month">Month</button>
   <span id="fbRange" style="margin-left:auto"></span>
 </div>
 
 <div class="grid">
-<div class="card full"><h2>Weekly ticket volume by task type</h2><canvas id="cWeek"></canvas>
+<div class="card full"><h2>Ticket volume by task type <span class="gsfx" id="gWeek"></span></h2><canvas id="cWeek"></canvas>
 <div class="note">The before/after timeline feature ship-dates annotate (once the Features table has rows). <span id="covNote"></span></div></div>
 
-<div class="card full"><h2>Flow — tickets opened vs closed per week</h2><canvas id="cFlow"></canvas>
+<div class="card full"><h2>Flow — tickets opened vs closed <span class="gsfx" id="gFlow"></span></h2><canvas id="cFlow"></canvas>
 <div class="note">Gray bars are the weekly net (opened − closed): above zero the backlog grows, below it shrinks. Closes need a "Moved to Done" date — batches closed without one don't register here.</div></div>
 
 <div class="card"><h2>Backlog aging by client <span class="chip c-px">calendar age</span></h2><canvas id="cAging"></canvas>
@@ -104,7 +112,7 @@ canvas{max-height:340px}
 <div class="note">Open (non-Done) tickets per person by current status. Allocation view, not a ranking.</div></div>
 <div class="card"><h2>Open backlog by client × status</h2><canvas id="cBack"></canvas></div>
 
-<div class="card"><h2>Weekly volume by client phase <span class="chip c-px">decay proxy</span></h2><canvas id="cPhase"></canvas>
+<div class="card"><h2>Volume by client phase <span class="gsfx" id="gPhase"></span> <span class="chip c-px">decay proxy</span></h2><canvas id="cPhase"></canvas>
 <div class="note">Volume stands in for hours until intervals accrue. Healthy = later-phase share shrinking. Caveat: colored by the client's <i>current</i> phase (history isn't stored).</div></div>
 <div class="card"><h2>Time to Copilot / Autopilot per client</h2><canvas id="cTTA"></canvas>
 <div class="note">Days from scoping to each phase gate, clients with recorded dates. The cohort baseline for feature metric #6.</div></div>
@@ -159,51 +167,84 @@ function stack(rows,keyF,typeF,valF,horizontal){
   return {labels:keys,datasets,horizontal};
 }
 
-// --- date-range filter for the weekly time-series charts -----------------------
-let _wk=[],_flowD=[],_vp=[],dFrom="",dTo="";
-const inRange=ws=>(!dFrom||ws>=dFrom)&&(!dTo||ws<=dTo);
-function renderWeekly(){
-  const week=_wk.filter(r=>inRange(r.week_start));
-  const flow=_flowD.filter(r=>inRange(r.week_start));
-  const vphase=_vp.filter(r=>inRange(r.week_start));
-  const w=stack(week,r=>r.week_label,r=>r.change_type,r=>r.tickets);
+// --- time-series filter: date range + adaptive day/week/month bucketing --------
+// Backend serves DAILY rows; we roll them up to the chosen grain here, so
+// narrowing the range reveals day-to-day detail instead of fixed weekly bars.
+let _dtype=[],_dflow=[],_dphase=[],dFrom="",dTo="",grainMode="auto";
+const inRange=d=>(!dFrom||d>=dFrom)&&(!dTo||d<=dTo);
+const parseYMD=s=>{const[y,m,d]=s.split("-").map(Number);return new Date(Date.UTC(y,m-1,d));};
+const fmtDM=dt=>dt.toLocaleDateString("en-GB",{day:"2-digit",month:"short",timeZone:"UTC"});
+function bucketOf(s,g){const d=parseYMD(s);
+  if(g==="day")return{key:s,label:fmtDM(d)};
+  if(g==="month")return{key:s.slice(0,7)+"-01",label:d.toLocaleDateString("en-GB",{month:"short",year:"numeric",timeZone:"UTC"})};
+  const wd=(d.getUTCDay()+6)%7,mon=new Date(d);mon.setUTCDate(d.getUTCDate()-wd);
+  return{key:mon.toISOString().slice(0,10),label:fmtDM(mon)};}
+function autoGrain(rows){let lo=dFrom,hi=dTo;
+  if(!lo||!hi){const ds=rows.map(r=>r.day).sort();lo=lo||ds[0];hi=hi||ds[ds.length-1];}
+  if(!lo||!hi)return"week";
+  const span=(parseYMD(hi)-parseYMD(lo))/86400000;
+  return span<=45?"day":span<=220?"week":"month";}
+// roll daily pivot rows [{day,<dim>,tickets}] into bucketed flat rows for stack()
+function rebucket(rows,g,dim){const m=new Map(),out=[];
+  for(const r of rows){const{key,label}=bucketOf(r.day,g),id=key+"|"+r[dim];
+    if(!m.has(id)){const o={k:key,label,dim:r[dim],tickets:0};m.set(id,o);out.push(o);}
+    m.get(id).tickets+=(+r.tickets||0);}
+  return out.sort((a,b)=>a.k<b.k?-1:a.k>b.k?1:0);}
+function rebucketFlow(rows,g){const m=new Map(),out=[];
+  for(const r of rows){const{key,label}=bucketOf(r.day,g);
+    if(!m.has(key)){const o={k:key,label,opened:0,closed:0};m.set(key,o);out.push(o);}
+    const o=m.get(key);o.opened+=(+r.opened||0);o.closed+=(+r.closed||0);}
+  out.sort((a,b)=>a.k<b.k?-1:1);out.forEach(o=>o.net=o.opened-o.closed);return out;}
+function renderTS(){
+  const dt=_dtype.filter(r=>inRange(r.day)),df=_dflow.filter(r=>inRange(r.day)),dp=_dphase.filter(r=>inRange(r.day));
+  const g=grainMode==="auto"?autoGrain(_dtype):grainMode;
+  const sfx=`· per ${g}`;["gWeek","gFlow","gPhase"].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=sfx;});
+
+  const w=stack(rebucket(dt,g,"change_type"),r=>r.label,r=>r.dim,r=>r.tickets);
   draw("cWeek",{type:"bar",data:{labels:w.labels,datasets:w.datasets},
     options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
-  draw("cFlow",{data:{labels:flow.map(r=>r.week_label),datasets:[
-    {type:"line",label:"Opened",data:flow.map(r=>+r.opened),borderColor:"#7ba3f5",backgroundColor:"#7ba3f5",tension:.25,pointRadius:2},
-    {type:"line",label:"Closed",data:flow.map(r=>+r.closed),borderColor:C.fix,backgroundColor:C.fix,tension:.25,pointRadius:2},
-    {type:"bar",label:"Net (backlog growth)",data:flow.map(r=>+r.net),backgroundColor:flow.map(r=>+r.net>0?"#e5534b66":"#4cc38a44")}]},
-    options:{scales:{y:{title:{display:true,text:"tickets / week"}}}}});
+
+  const fl=rebucketFlow(df,g);
+  draw("cFlow",{data:{labels:fl.map(o=>o.label),datasets:[
+    {type:"line",label:"Opened",data:fl.map(o=>o.opened),borderColor:"#7ba3f5",backgroundColor:"#7ba3f5",tension:.25,pointRadius:2},
+    {type:"line",label:"Closed",data:fl.map(o=>o.closed),borderColor:C.fix,backgroundColor:C.fix,tension:.25,pointRadius:2},
+    {type:"bar",label:"Net (backlog growth)",data:fl.map(o=>o.net),backgroundColor:fl.map(o=>o.net>0?"#e5534b66":"#4cc38a44")}]},
+    options:{scales:{y:{title:{display:true,text:"tickets / "+g}}}}});
+
   const phaseColor={"Development":"#7ba3f5","Copilot":"#f0b429","Autopilot":"#a371f7","Stable":"#4cc38a","No phase":"#565e72"};
-  const vp=stack(vphase,r=>r.week_label,r=>r.phase,r=>r.tickets);
+  const vp=stack(rebucket(dp,g,"phase"),r=>r.label,r=>r.dim,r=>r.tickets);
   vp.datasets.forEach(d=>d.backgroundColor=phaseColor[d.label]||"#565e72");
   draw("cPhase",{type:"bar",data:{labels:vp.labels,datasets:vp.datasets},
     options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
-  const el=document.getElementById("fbRange"),nWeeks=new Set(week.map(r=>r.week_start)).size;
-  if(el)el.textContent=(dFrom||dTo)?`${nWeeks} weeks shown`:`${nWeeks} weeks (all time)`;
+
+  const el=document.getElementById("fbRange"),nb=new Set(rebucket(dt,g,"change_type").map(r=>r.k)).size;
+  if(el)el.textContent=`${nb} ${g}${nb!==1?"s":""}${(dFrom||dTo)?" in range":""}`;
 }
 function fbClearPresets(){document.querySelectorAll(".fb-btn").forEach(b=>b.classList.remove("on"));}
 function fbSet(from,to,btn){dFrom=from;dTo=to;
   document.getElementById("dFrom").value=from;document.getElementById("dTo").value=to;
-  fbClearPresets();if(btn)btn.classList.add("on");renderWeekly();}
+  fbClearPresets();if(btn)btn.classList.add("on");renderTS();}
 addEventListener("DOMContentLoaded",()=>{
-  document.getElementById("dFrom").addEventListener("change",e=>{dFrom=e.target.value;fbClearPresets();renderWeekly();});
-  document.getElementById("dTo").addEventListener("change",e=>{dTo=e.target.value;fbClearPresets();renderWeekly();});
+  document.getElementById("dFrom").addEventListener("change",e=>{dFrom=e.target.value;fbClearPresets();renderTS();});
+  document.getElementById("dTo").addEventListener("change",e=>{dTo=e.target.value;fbClearPresets();renderTS();});
   document.getElementById("dAll").addEventListener("click",e=>fbSet("","",e.target));
   document.querySelectorAll(".fb-btn[data-days]").forEach(b=>b.addEventListener("click",()=>{
     const now=new Date(),to=now.toISOString().slice(0,10);
     const from=new Date(now.getTime()-(+b.dataset.days)*86400000).toISOString().slice(0,10);
     fbSet(from,to,b);}));
+  document.querySelectorAll(".fb-gbtn[data-grain]").forEach(b=>b.addEventListener("click",()=>{
+    grainMode=b.dataset.grain;
+    document.querySelectorAll(".fb-gbtn").forEach(x=>x.classList.remove("on"));b.classList.add("on");renderTS();}));
 });
 
 async function load(){
   const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap,slsl,latest]=await Promise.all([
-    api("data-quality"),api("by-week-type"),api("by-client-type"),api("by-fde-type"),
+    api("data-quality"),api("by-day-type"),api("by-client-type"),api("by-fde-type"),
     api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
-    api("throughput"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
+    api("throughput-daily"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
     api("priority-age"),api("arrival-dow"),api("change-type-coverage"),
     api("capacity-recurrence"),api("fde-stage-mix"),api("time-to-autopilot"),
-    api("volume-by-phase"),api("sl-capacity"),api("sl-capacity-by-sl"),api("recent-tickets")]);
+    api("volume-by-phase-day"),api("sl-capacity"),api("sl-capacity-by-sl"),api("recent-tickets")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -219,8 +260,8 @@ async function load(){
     `<td>${r.pic}</td><td>${r.change_type}</td><td>${r.priority??"—"}</td>`+
     `<td><span class="chip ${stChip(r.status)}">${r.status??"—"}</span></td><td class=note>${r.reported??"—"}</td></tr>`).join("");
 
-  // weekly time-series charts are date-filterable — stash + render via renderWeekly()
-  _wk=week; _flowD=flow; _vp=vphase; renderWeekly();
+  // daily time-series stashed; renderTS() buckets to day/week/month by zoom
+  _dtype=week; _dflow=flow; _dphase=vphase; renderTS();
 
   // change-type coverage note — engineer-typed only (inferences are backend-only)
   if(cov&&cov[0])document.getElementById("covNote").textContent=
