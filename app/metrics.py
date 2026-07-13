@@ -39,6 +39,7 @@ _VIEWS = {
     "volume-by-phase": "v_volume_by_phase_week",
     "sl-capacity": "v_sl_capacity",
     "sl-capacity-by-sl": "v_sl_capacity_by_sl",
+    "recent-tickets": "v_recent_tickets",
 }
 
 

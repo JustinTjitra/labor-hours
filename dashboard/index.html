@@ -53,6 +53,10 @@ canvas{max-height:340px}
 <div id="activeGrid" class="active-grid"></div>
 <div class="note">Live from open intervals (5&nbsp;s push · timer ticks per second). One card per FDE currently on a ticket — task name from the ticket DB, elapsed since they pressed start. One open interval per person; starting a new ticket auto-stops the last.</div></div>
 
+<div class="card full" style="margin-bottom:16px"><h2>Latest tickets — 10 most recent <span class="chip c-ok">live · 60s refresh</span></h2>
+<table><thead><tr><th>#</th><th>Ticket</th><th>Client</th><th>PIC</th><th>Type</th><th>Priority</th><th>Status</th><th>Reported</th></tr></thead><tbody id="tLatest"></tbody></table>
+<div class="note">Newest first by Notion ticket ID (creation order). New tickets land here within ~2 minutes of being created in Notion.</div></div>
+
 <div class="banner"><b>⚠ Time figures without interval coverage are PROXIES.</b> Until the <code>/on</code> toggle produces intervals, "work time" columns are calendar spans (In&nbsp;Progress→Done). <code>active_hours</code> is the real number and fills in as intervals accrue.</div>
 
 <div class="kpis" id="kpis"></div>
@@ -139,13 +143,13 @@ function stack(rows,keyF,typeF,valF,horizontal){
 }
 
 async function load(){
-  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap,slsl]=await Promise.all([
+  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap,slsl,latest]=await Promise.all([
     api("data-quality"),api("by-week-type"),api("by-client-type"),api("by-fde-type"),
     api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
     api("throughput"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
     api("priority-age"),api("arrival-dow"),api("change-type-coverage"),
     api("capacity-recurrence"),api("fde-stage-mix"),api("time-to-autopilot"),
-    api("volume-by-phase"),api("sl-capacity"),api("sl-capacity-by-sl")]);
+    api("volume-by-phase"),api("sl-capacity"),api("sl-capacity-by-sl"),api("recent-tickets")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -154,8 +158,15 @@ async function load(){
   document.getElementById("kpis").innerHTML=kpi.map(([k,l])=>
     `<div class="kpi"><div class="v">${kv[k]??"–"}</div><div class="l">${l}</div></div>`).join("");
 
+  // latest tickets strip
+  const stChip=s=>s==="Done"?"c-ok":s==="In Progress"?"c-px":s==="👀 REVIEW"?"c-pt":(s==="QA Failed"||s==="Blocked")?"c-bl":"";
+  document.getElementById("tLatest").innerHTML=latest.map(r=>
+    `<tr><td class=note>#${r.num??"—"}</td><td>${(r.feedback??"").replace(/</g,"&lt;")}</td><td><b>${r.client??"—"}</b></td>`+
+    `<td>${r.pic}</td><td>${r.change_type}</td><td>${r.priority??"—"}</td>`+
+    `<td><span class="chip ${stChip(r.status)}">${r.status??"—"}</span></td><td class=note>${r.reported??"—"}</td></tr>`).join("");
+
   // weekly volume (stacked bar)
-  const w=stack(week,r=>r.iso_week,r=>r.change_type,r=>r.tickets);
+  const w=stack(week,r=>r.week_label,r=>r.change_type,r=>r.tickets);
   draw("cWeek",{type:"bar",data:{labels:w.labels,datasets:w.datasets},
     options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
 
@@ -164,7 +175,7 @@ async function load(){
     `Change types: ${cov[0].human_typed} typed by engineers, ${cov[0].tickets-cov[0].human_typed} untyped (${Math.round(100*cov[0].human_typed/cov[0].tickets)}% typed).`;
 
   // flow: opened vs closed lines + net bars
-  draw("cFlow",{data:{labels:flow.map(r=>r.iso_week),datasets:[
+  draw("cFlow",{data:{labels:flow.map(r=>r.week_label),datasets:[
     {type:"line",label:"Opened",data:flow.map(r=>+r.opened),borderColor:"#7ba3f5",backgroundColor:"#7ba3f5",tension:.25,pointRadius:2},
     {type:"line",label:"Closed",data:flow.map(r=>+r.closed),borderColor:C.fix,backgroundColor:C.fix,tension:.25,pointRadius:2},
     {type:"bar",label:"Net (backlog growth)",data:flow.map(r=>+r.net),backgroundColor:flow.map(r=>+r.net>0?"#e5534b66":"#4cc38a44")}]},
@@ -256,7 +267,7 @@ async function load(){
 
   // weekly volume by client phase (decay proxy)
   const phaseColor={"Development":"#7ba3f5","Copilot":"#f0b429","Autopilot":"#a371f7","Stable":"#4cc38a","No phase":"#565e72"};
-  const vp=stack(vphase,r=>r.iso_week,r=>r.phase,r=>r.tickets);
+  const vp=stack(vphase,r=>r.week_label,r=>r.phase,r=>r.tickets);
   vp.datasets.forEach(d=>d.backgroundColor=phaseColor[d.label]||"#565e72");
   draw("cPhase",{type:"bar",data:{labels:vp.labels,datasets:vp.datasets},
     options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});

@@ -41,16 +41,18 @@ ORDER BY scoping_date;
 -- last week recolors its whole history. Good enough to spot "Stable client
 -- still generating Copilot-level volume"; the hours version replaces this
 -- once intervals accrue.
-CREATE OR REPLACE VIEW v_volume_by_phase_week AS
+DROP VIEW IF EXISTS v_volume_by_phase_week;  -- reshaped 2026-07-09 (iso_week -> week_start/label)
+CREATE VIEW v_volume_by_phase_week AS
 SELECT
-  to_char(t.reported_date, 'IYYY-IW') AS iso_week,
-  COALESCE(c.phase, 'No phase')       AS phase,
-  COUNT(*)                            AS tickets
+  date_trunc('week', t.reported_date)::date               AS week_start,
+  to_char(date_trunc('week', t.reported_date), 'DD Mon')  AS week_label,
+  COALESCE(c.phase, 'No phase')                           AS phase,
+  COUNT(*)                                                AS tickets
 FROM tickets t
 LEFT JOIN clients c ON c.id = t.client_id
 WHERE t.reported_date IS NOT NULL
-GROUP BY 1, 2
-ORDER BY 1, 2;
+GROUP BY 1, 2, 3
+ORDER BY 1, 3;
 
 -- SL capacity, per Service Lead: each SL's book of clients and the triage load
 -- flowing into it. The catalog item is "tickets/day per hot client x triage-and-
@@ -119,3 +121,22 @@ JOIN clients c ON c.id = t.client_id
 GROUP BY c.name
 HAVING COUNT(*) FILTER (WHERE t.reported_date >= now() - interval '28 days') > 0
 ORDER BY tickets_per_week DESC;
+
+-- Latest tickets: the 10 most recently created (auto_number is Notion's
+-- monotonically increasing ID, so it is creation order even when reported_date
+-- is backfilled). Powers the "Latest tickets" strip near the top of the page.
+CREATE OR REPLACE VIEW v_recent_tickets AS
+SELECT
+  t.auto_number                          AS num,
+  t.feedback                             AS feedback,
+  c.name                                 AS client,
+  t.status                               AS status,
+  t.priority                             AS priority,
+  COALESCE(t.change_type, 'Untyped')     AS change_type,
+  COALESCE(m.label, '—')                 AS pic,
+  to_char(t.reported_date, 'DD Mon')     AS reported
+FROM tickets t
+LEFT JOIN clients c ON c.id = t.client_id
+LEFT JOIN fde_map m ON m.notion_user_id = t.pic_user_id
+ORDER BY t.auto_number DESC NULLS LAST
+LIMIT 10;

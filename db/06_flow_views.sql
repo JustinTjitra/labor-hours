@@ -16,22 +16,24 @@
 -- --- THROUGHPUT --------------------------------------------------------------
 -- Weekly opened vs closed + net backlog growth. A week can appear with opened=0
 -- (only closes) or closed=0, hence the FULL JOIN.
-CREATE OR REPLACE VIEW v_flow_throughput_weekly AS
+DROP VIEW IF EXISTS v_flow_throughput_weekly;  -- reshaped 2026-07-09 (iso_week -> week_start/label)
+CREATE VIEW v_flow_throughput_weekly AS
 WITH opened AS (
-  SELECT to_char(reported_date, 'IYYY-IW') AS iso_week, COUNT(*) AS opened
+  SELECT date_trunc('week', reported_date)::date AS week_start, COUNT(*) AS opened
   FROM tickets WHERE reported_date IS NOT NULL GROUP BY 1
 ),
 closed AS (
-  SELECT to_char(moved_to_done, 'IYYY-IW') AS iso_week, COUNT(*) AS closed
+  SELECT date_trunc('week', moved_to_done)::date AS week_start, COUNT(*) AS closed
   FROM tickets WHERE moved_to_done IS NOT NULL GROUP BY 1
 )
 SELECT
-  COALESCE(o.iso_week, c.iso_week)              AS iso_week,
-  COALESCE(o.opened, 0)                         AS opened,
-  COALESCE(c.closed, 0)                         AS closed,
-  COALESCE(o.opened, 0) - COALESCE(c.closed, 0) AS net
+  COALESCE(o.week_start, c.week_start)                          AS week_start,
+  to_char(COALESCE(o.week_start, c.week_start), 'DD Mon')       AS week_label,
+  COALESCE(o.opened, 0)                                         AS opened,
+  COALESCE(c.closed, 0)                                         AS closed,
+  COALESCE(o.opened, 0) - COALESCE(c.closed, 0)                 AS net
 FROM opened o
-FULL JOIN closed c USING (iso_week)
+FULL JOIN closed c USING (week_start)
 ORDER BY 1;
 
 -- --- BACKLOG AGING -----------------------------------------------------------
@@ -136,15 +138,17 @@ LEFT JOIN clients c                  ON c.id = t.client_id
 LEFT JOIN v_ticket_active_hours ah   ON ah.ticket_id = t.id
 GROUP BY c.name, COALESCE(t.change_type, 'Untyped');
 
-CREATE OR REPLACE VIEW v_by_week_type AS
+DROP VIEW IF EXISTS v_by_week_type;  -- reshaped 2026-07-09 (iso_week -> week_start/label)
+CREATE VIEW v_by_week_type AS
 SELECT
-  to_char(t.reported_date, 'IYYY-IW')                   AS iso_week,
-  COALESCE(t.change_type, 'Untyped')  AS change_type,
-  COUNT(*)                                              AS tickets
+  date_trunc('week', t.reported_date)::date                     AS week_start,
+  to_char(date_trunc('week', t.reported_date), 'DD Mon')        AS week_label,
+  COALESCE(t.change_type, 'Untyped')                            AS change_type,
+  COUNT(*)                                                      AS tickets
 FROM tickets t
 WHERE t.reported_date IS NOT NULL
-GROUP BY 1, 2
-ORDER BY 1, 2;
+GROUP BY 1, 2, 3
+ORDER BY 1, 3;
 
 CREATE OR REPLACE VIEW v_by_fde_type AS
 SELECT
