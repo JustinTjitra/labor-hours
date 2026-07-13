@@ -108,7 +108,8 @@ SELECT
   (actual_autopilot_date - scoping_date) AS days_scoping_to_autopilot
 FROM clients;
 
--- who is working right now — open intervals, anonymized. Powers the SSE panel.
+-- who is working right now — open intervals. Powers the SSE panel. New columns
+-- (num/status/priority/change_type) are APPENDED so CREATE OR REPLACE stays valid.
 CREATE OR REPLACE VIEW v_who_working_now AS
 SELECT
   COALESCE(m.label, 'Unmapped') AS person,
@@ -117,7 +118,11 @@ SELECT
   c.name                        AS client,
   i.started_at,
   EXTRACT(EPOCH FROM (now() - i.started_at)) / 60.0 AS minutes_open,
-  i.source
+  i.source,
+  t.auto_number                 AS num,
+  t.status                      AS status,
+  t.priority                    AS priority,
+  COALESCE(t.change_type, 'Untyped') AS change_type
 FROM intervals i
 LEFT JOIN fde_map m ON m.notion_user_id = i.person_user_id
 LEFT JOIN tickets t ON t.id = i.ticket_id
