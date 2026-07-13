@@ -130,6 +130,28 @@ LEFT JOIN clients c ON c.id = t.client_id
 WHERE i.ended_at IS NULL
 ORDER BY i.started_at;
 
+-- recent_intervals: the latest work sessions (open + closed), newest first.
+-- The history companion to v_who_working_now — who worked which ticket and when.
+CREATE OR REPLACE VIEW v_recent_intervals AS
+SELECT
+  COALESCE(m.label, 'Unmapped') AS person,
+  t.auto_number                 AS num,
+  t.feedback                    AS ticket,
+  c.name                        AS client,
+  i.started_at,
+  i.ended_at,
+  ROUND(EXTRACT(EPOCH FROM (COALESCE(i.ended_at, now()) - i.started_at)) / 60.0) AS minutes,
+  (i.ended_at IS NULL)          AS is_open,
+  i.auto_closed,
+  i.close_reason,
+  i.source
+FROM intervals i
+LEFT JOIN fde_map m ON m.notion_user_id = i.person_user_id
+LEFT JOIN tickets t ON t.id = i.ticket_id
+LEFT JOIN clients c ON c.id = t.client_id
+ORDER BY i.started_at DESC
+LIMIT 15;
+
 -- data_quality: live coverage/quality gauges (mirror of the SQLite data_quality table)
 CREATE OR REPLACE VIEW v_data_quality AS
 SELECT * FROM (VALUES

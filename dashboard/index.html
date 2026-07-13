@@ -67,6 +67,10 @@ canvas{max-height:340px}
 <table><thead><tr><th>#</th><th>Ticket</th><th>Client</th><th>PIC</th><th>Type</th><th>Priority</th><th>Status</th><th>Reported</th></tr></thead><tbody id="tLatest"></tbody></table>
 <div class="note">Newest first by Notion ticket ID (creation order). New tickets land here within ~2 minutes of being created in Notion.</div></div>
 
+<div class="card full" style="margin-bottom:16px"><h2>Latest work intervals <span class="chip c-ok">live · 60s refresh</span></h2>
+<table><thead><tr><th>Engineer</th><th>FDAE #</th><th>Task</th><th>Client</th><th>Started</th><th>Ended</th><th>Duration</th><th>Source</th></tr></thead><tbody id="tIntervals"></tbody></table>
+<div class="note">Most recent work sessions from the start/stop button, newest first. Times shown in your local timezone. "active" = still open; "auto" = ended by the system (ticket switch, ~2h idle, or end-of-day).</div></div>
+
 <div class="banner"><b>⚠ Time figures without interval coverage are PROXIES.</b> Until the <code>/on</code> toggle produces intervals, "work time" columns are calendar spans (In&nbsp;Progress→Done). <code>active_hours</code> is the real number and fills in as intervals accrue.</div>
 
 <div class="kpis" id="kpis"></div>
@@ -238,13 +242,13 @@ addEventListener("DOMContentLoaded",()=>{
 });
 
 async function load(){
-  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap,slsl,latest]=await Promise.all([
+  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap,slsl,latest,ivals]=await Promise.all([
     api("data-quality"),api("by-day-type"),api("by-client-type"),api("by-fde-type"),
     api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
     api("throughput-daily"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
     api("priority-age"),api("arrival-dow"),api("change-type-coverage"),
     api("capacity-recurrence"),api("fde-stage-mix"),api("time-to-autopilot"),
-    api("volume-by-phase-day"),api("sl-capacity"),api("sl-capacity-by-sl"),api("recent-tickets")]);
+    api("volume-by-phase-day"),api("sl-capacity"),api("sl-capacity-by-sl"),api("recent-tickets"),api("recent-intervals")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -259,6 +263,19 @@ async function load(){
     `<tr><td class=note>#${r.num??"—"}</td><td>${(r.feedback??"").replace(/</g,"&lt;")}</td><td><b>${r.client??"—"}</b></td>`+
     `<td>${r.pic}</td><td>${r.change_type}</td><td>${r.priority??"—"}</td>`+
     `<td><span class="chip ${stChip(r.status)}">${r.status??"—"}</span></td><td class=note>${r.reported??"—"}</td></tr>`).join("");
+
+  // latest work intervals (history feed)
+  const fmtDT=s=>{if(!s)return "—";const d=new Date(s.replace(" ","T"));return d.toLocaleString([],{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});};
+  const fmtT=s=>{if(!s)return "—";const d=new Date(s.replace(" ","T"));return d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});};
+  const fmtMin=m=>{m=Math.round(+m||0);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;};
+  document.getElementById("tIntervals").innerHTML=ivals.map(r=>
+    `<tr><td><b>${r.person}</b></td><td class=note>${r.num!=null?"#"+r.num:"—"}</td>`+
+    `<td>${(r.ticket??"").replace(/</g,"&lt;")||"<span style='color:#565e72'>(untitled)</span>"}</td><td>${r.client??"—"}</td>`+
+    `<td>${fmtDT(r.started_at)}</td>`+
+    `<td>${r.is_open?'<span class="chip c-ok">active</span>':fmtT(r.ended_at)}</td>`+
+    `<td>${fmtMin(r.minutes)}${r.is_open?"+":""}</td>`+
+    `<td class=note>${(r.source||"").replace("notion-","")}${r.auto_closed?" · auto":""}</td></tr>`).join("")
+    ||`<tr><td colspan=8 class=note>No work intervals recorded yet — they appear once FDEs use the start/stop button.</td></tr>`;
 
   // daily time-series stashed; renderTS() buckets to day/week/month by zoom
   _dtype=week; _dflow=flow; _dphase=vphase; renderTS();

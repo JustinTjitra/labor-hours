@@ -40,6 +40,7 @@ _VIEWS = {
     "sl-capacity": "v_sl_capacity",
     "sl-capacity-by-sl": "v_sl_capacity_by_sl",
     "recent-tickets": "v_recent_tickets",
+    "recent-intervals": "v_recent_intervals",
     # daily-granularity time series (db/08) — client rolls up to day/week/month
     "by-day-type": "v_by_day_type",
     "throughput-daily": "v_flow_throughput_daily",
