@@ -31,16 +31,22 @@ LEFT JOIN clients c                 ON c.id = t.client_id
 LEFT JOIN v_ticket_active_hours ah  ON ah.ticket_id = t.id
 GROUP BY c.name, COALESCE(t.change_type, 'Untyped');
 
--- by_week_type: ISO week of Reported Date x change_type x tickets
-CREATE OR REPLACE VIEW v_by_week_type AS
+-- by_week_type: week of Reported Date x change_type x tickets. Emits the week
+-- START DATE + a "DD Mon" label (2026-07-10: replaced ISO week numbers).
+-- MUST stay column-identical to the redefinition in 06_flow_views.sql — a
+-- shape mismatch makes CREATE OR REPLACE fail on the second boot (Postgres
+-- can't rename/drop view columns), which took the Render service down once.
+DROP VIEW IF EXISTS v_by_week_type;
+CREATE VIEW v_by_week_type AS
 SELECT
-  to_char(reported_date, 'IYYY-IW')  AS iso_week,
-  COALESCE(change_type, 'Untyped')   AS change_type,
-  COUNT(*)                           AS tickets
-FROM tickets
-WHERE reported_date IS NOT NULL
-GROUP BY 1, 2
-ORDER BY 1, 2;
+  date_trunc('week', t.reported_date)::date                     AS week_start,
+  to_char(date_trunc('week', t.reported_date), 'DD Mon')        AS week_label,
+  COALESCE(t.change_type, 'Untyped')                            AS change_type,
+  COUNT(*)                                                      AS tickets
+FROM tickets t
+WHERE t.reported_date IS NOT NULL
+GROUP BY 1, 2, 3
+ORDER BY 1, 3;
 
 -- by_fde_type: anonymized PIC x change_type x tickets (mix only, no ranking).
 -- Unmapped PICs surface as 'Unassigned' so the mix stays honest.
