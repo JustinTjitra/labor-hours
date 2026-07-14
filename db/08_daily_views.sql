@@ -46,3 +46,13 @@ FROM tickets t
 LEFT JOIN clients c ON c.id = t.client_id
 WHERE t.reported_date IS NOT NULL
 GROUP BY 1, 2;
+
+-- Ticket volume by day x priority (time series; joins the framework as cPrio).
+CREATE OR REPLACE VIEW v_by_day_priority AS
+SELECT
+  t.reported_date::date              AS day,
+  COALESCE(t.priority, 'No priority') AS priority,
+  COUNT(*)                           AS tickets
+FROM tickets t
+WHERE t.reported_date IS NOT NULL
+GROUP BY 1, 2;

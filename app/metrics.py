@@ -45,6 +45,7 @@ _VIEWS = {
     "by-day-type": "v_by_day_type",
     "throughput-daily": "v_flow_throughput_daily",
     "volume-by-phase-day": "v_volume_by_phase_day",
+    "by-day-priority": "v_by_day_priority",
 }
 
 

@@ -118,6 +118,8 @@ canvas{max-height:340px}
 
 <div class="card"><h2>Volume by client phase <span class="gsfx" id="gPhase"></span> <span class="chip c-px">decay proxy</span></h2><canvas id="cPhase"></canvas>
 <div class="note">Volume stands in for hours until intervals accrue. Healthy = later-phase share shrinking. Caveat: colored by the client's <i>current</i> phase (history isn't stored).</div></div>
+<div class="card"><h2>Ticket volume by priority <span class="gsfx" id="gPrio"></span></h2><canvas id="cPrio"></canvas>
+<div class="note">Reported tickets by priority over time. Follows the date range &amp; bucket controls above.</div></div>
 <div class="card"><h2>Time to Copilot / Autopilot per client</h2><canvas id="cTTA"></canvas>
 <div class="note">Days from scoping to each phase gate, clients with recorded dates. The cohort baseline for feature metric #6.</div></div>
 
@@ -171,10 +173,21 @@ function stack(rows,keyF,typeF,valF,horizontal){
   return {labels:keys,datasets,horizontal};
 }
 
-// --- time-series filter: date range + adaptive day/week/month bucketing --------
+// --- time-series FRAMEWORK: date range + adaptive day/week/month bucketing ------
 // Backend serves DAILY rows; we roll them up to the chosen grain here, so
-// narrowing the range reveals day-to-day detail instead of fixed weekly bars.
-let _dtype=[],_dflow=[],_dphase=[],dFrom="",dTo="",grainMode="auto";
+// narrowing the range reveals day-to-day detail. TO ADD A FUTURE TIME SERIES:
+//   (1) add a daily view returning a `day` column + a /metrics endpoint, then
+//   (2) add one entry to TIMESERIES below.
+// The date+grain controls, fetch, filter, bucket, and draw all handle it for free.
+const PHASE_COLORS={"Development":"#7ba3f5","Copilot":"#f0b429","Autopilot":"#a371f7","Stable":"#4cc38a","No phase":"#565e72","Not started":"#565e72"};
+const PRIO_COLORS={"CRITICAL":"#e5534b","HIGH":"#e07b53","MEDIUM":"#f0b429","LOW":"#7ba3f5","No priority":"#565e72"};
+const TIMESERIES=[
+  {canvas:"cWeek", gsfx:"gWeek", data:"by-day-type",         kind:"stack", dim:"change_type"},
+  {canvas:"cFlow", gsfx:"gFlow", data:"throughput-daily",    kind:"flow"},
+  {canvas:"cPhase",gsfx:"gPhase",data:"volume-by-phase-day", kind:"stack", dim:"phase",    colors:PHASE_COLORS},
+  {canvas:"cPrio", gsfx:"gPrio", data:"by-day-priority",     kind:"stack", dim:"priority", colors:PRIO_COLORS},
+];
+let _ts={},dFrom="",dTo="",grainMode="auto";
 const inRange=d=>(!dFrom||d>=dFrom)&&(!dTo||d<=dTo);
 const parseYMD=s=>{const[y,m,d]=s.split("-").map(Number);return new Date(Date.UTC(y,m-1,d));};
 const fmtDM=dt=>dt.toLocaleDateString("en-GB",{day:"2-digit",month:"short",timeZone:"UTC"});
@@ -188,7 +201,6 @@ function autoGrain(rows){let lo=dFrom,hi=dTo;
   if(!lo||!hi)return"week";
   const span=(parseYMD(hi)-parseYMD(lo))/86400000;
   return span<=45?"day":span<=220?"week":"month";}
-// roll daily pivot rows [{day,<dim>,tickets}] into bucketed flat rows for stack()
 function rebucket(rows,g,dim){const m=new Map(),out=[];
   for(const r of rows){const{key,label}=bucketOf(r.day,g),id=key+"|"+r[dim];
     if(!m.has(id)){const o={k:key,label,dim:r[dim],tickets:0};m.set(id,o);out.push(o);}
@@ -199,29 +211,29 @@ function rebucketFlow(rows,g){const m=new Map(),out=[];
     if(!m.has(key)){const o={k:key,label,opened:0,closed:0};m.set(key,o);out.push(o);}
     const o=m.get(key);o.opened+=(+r.opened||0);o.closed+=(+r.closed||0);}
   out.sort((a,b)=>a.k<b.k?-1:1);out.forEach(o=>o.net=o.opened-o.closed);return out;}
+const tsEndpoints=()=>[...new Set(TIMESERIES.map(s=>s.data))];
 function renderTS(){
-  const dt=_dtype.filter(r=>inRange(r.day)),df=_dflow.filter(r=>inRange(r.day)),dp=_dphase.filter(r=>inRange(r.day));
-  const g=grainMode==="auto"?autoGrain(_dtype):grainMode;
-  const sfx=`· per ${g}`;["gWeek","gFlow","gPhase"].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=sfx;});
-
-  const w=stack(rebucket(dt,g,"change_type"),r=>r.label,r=>r.dim,r=>r.tickets);
-  draw("cWeek",{type:"bar",data:{labels:w.labels,datasets:w.datasets},
-    options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
-
-  const fl=rebucketFlow(df,g);
-  draw("cFlow",{data:{labels:fl.map(o=>o.label),datasets:[
-    {type:"line",label:"Opened",data:fl.map(o=>o.opened),borderColor:"#7ba3f5",backgroundColor:"#7ba3f5",tension:.25,pointRadius:2},
-    {type:"line",label:"Closed",data:fl.map(o=>o.closed),borderColor:C.fix,backgroundColor:C.fix,tension:.25,pointRadius:2},
-    {type:"bar",label:"Net (backlog growth)",data:fl.map(o=>o.net),backgroundColor:fl.map(o=>o.net>0?"#e5534b66":"#4cc38a44")}]},
-    options:{scales:{y:{title:{display:true,text:"tickets / "+g}}}}});
-
-  const phaseColor={"Development":"#7ba3f5","Copilot":"#f0b429","Autopilot":"#a371f7","Stable":"#4cc38a","No phase":"#565e72"};
-  const vp=stack(rebucket(dp,g,"phase"),r=>r.label,r=>r.dim,r=>r.tickets);
-  vp.datasets.forEach(d=>d.backgroundColor=phaseColor[d.label]||"#565e72");
-  draw("cPhase",{type:"bar",data:{labels:vp.labels,datasets:vp.datasets},
-    options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
-
-  const el=document.getElementById("fbRange"),nb=new Set(rebucket(dt,g,"change_type").map(r=>r.k)).size;
+  const ref=_ts[TIMESERIES[0].data]||[];
+  const g=grainMode==="auto"?autoGrain(ref):grainMode, sfx="· per "+g;
+  for(const s of TIMESERIES){
+    const gs=document.getElementById(s.gsfx); if(gs)gs.textContent=sfx;
+    if(!document.getElementById(s.canvas))continue;
+    const rows=(_ts[s.data]||[]).filter(r=>inRange(r.day));
+    if(s.kind==="flow"){
+      const fl=rebucketFlow(rows,g);
+      draw(s.canvas,{data:{labels:fl.map(o=>o.label),datasets:[
+        {type:"line",label:"Opened",data:fl.map(o=>o.opened),borderColor:"#7ba3f5",backgroundColor:"#7ba3f5",tension:.25,pointRadius:2},
+        {type:"line",label:"Closed",data:fl.map(o=>o.closed),borderColor:C.fix,backgroundColor:C.fix,tension:.25,pointRadius:2},
+        {type:"bar",label:"Net (backlog growth)",data:fl.map(o=>o.net),backgroundColor:fl.map(o=>o.net>0?"#e5534b66":"#4cc38a44")}]},
+        options:{scales:{y:{title:{display:true,text:"tickets / "+g}}}}});
+    }else{
+      const bk=stack(rebucket(rows,g,s.dim),r=>r.label,r=>r.dim,r=>r.tickets);
+      if(s.colors)bk.datasets.forEach(d=>d.backgroundColor=s.colors[d.label]||"#565e72");
+      draw(s.canvas,{type:"bar",data:{labels:bk.labels,datasets:bk.datasets},
+        options:{scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:"tickets"}}}}});
+    }
+  }
+  const el=document.getElementById("fbRange"),nb=new Set(rebucket(ref.filter(r=>inRange(r.day)),g,TIMESERIES[0].dim).map(r=>r.k)).size;
   if(el)el.textContent=`${nb} ${g}${nb!==1?"s":""}${(dFrom||dTo)?" in range":""}`;
 }
 function fbClearPresets(){document.querySelectorAll(".fb-btn").forEach(b=>b.classList.remove("on"));}
@@ -242,13 +254,13 @@ addEventListener("DOMContentLoaded",()=>{
 });
 
 async function load(){
-  const [dq,week,client,fde,back,qaf,rec,cat,flow,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,vphase,slcap,slsl,latest,ivals]=await Promise.all([
-    api("data-quality"),api("by-day-type"),api("by-client-type"),api("by-fde-type"),
+  const [dq,client,fde,back,qaf,rec,cat,aging,cyc,cycpr,prage,dow,cov,cap,fstage,tta,slcap,slsl,latest,ivals]=await Promise.all([
+    api("data-quality"),api("by-client-type"),api("by-fde-type"),
     api("backlog"),api("qa-failed-open"),api("recurrence"),api("catalog"),
-    api("throughput-daily"),api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
+    api("backlog-aging"),api("cycle-time"),api("cycle-time-priority"),
     api("priority-age"),api("arrival-dow"),api("change-type-coverage"),
     api("capacity-recurrence"),api("fde-stage-mix"),api("time-to-autopilot"),
-    api("volume-by-phase-day"),api("sl-capacity"),api("sl-capacity-by-sl"),api("recent-tickets"),api("recent-intervals")]);
+    api("sl-capacity"),api("sl-capacity-by-sl"),api("recent-tickets"),api("recent-intervals")]);
 
   // KPIs from data_quality
   const kv=Object.fromEntries(dq.map(r=>[r.measure,r.value]));
@@ -277,8 +289,10 @@ async function load(){
     `<td class=note>${(r.source||"").replace("notion-","")}${r.auto_closed?" · auto":""}</td></tr>`).join("")
     ||`<tr><td colspan=8 class=note>No work intervals recorded yet — they appear once FDEs use the start/stop button.</td></tr>`;
 
-  // daily time-series stashed; renderTS() buckets to day/week/month by zoom
-  _dtype=week; _dflow=flow; _dphase=vphase; renderTS();
+  // time-series data — framework-driven (see TIMESERIES registry). Fetch each
+  // distinct daily endpoint once, then render+bucket via renderTS().
+  const _eps=tsEndpoints(),_tr=await Promise.all(_eps.map(ep=>api(ep)));
+  _eps.forEach((ep,i)=>_ts[ep]=_tr[i]); renderTS();
 
   // change-type coverage note — engineer-typed only (inferences are backend-only)
   if(cov&&cov[0])document.getElementById("covNote").textContent=
